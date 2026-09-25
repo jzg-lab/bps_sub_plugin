@@ -61,6 +61,7 @@ type status struct {
 	Requests      int64         `json:"requests"`
 	InFlight      int64         `json:"in_flight"`
 	Failed        int64         `json:"failed"`
+	Cancelled     int64         `json:"cancelled"`
 	HostServices  bool          `json:"host_services"`
 	Config        config.Config `json:"config"`
 }
@@ -76,6 +77,7 @@ func (s *Server) Health(context.Context, *pluginv1.HealthRequest) (*pluginv1.Hea
 		Requests:      s.stats.Total.Load(),
 		InFlight:      s.stats.InFlight.Load(),
 		Failed:        s.stats.Failed.Load(),
+		Cancelled:     s.stats.Cancelled.Load(),
 		HostServices:  hostReady,
 		Config:        s.pool.Config(),
 	})

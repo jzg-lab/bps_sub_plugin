@@ -6,5 +6,5 @@ const (
 	// PluginID 是插件在宿主中的唯一标识，发布后不要修改。
 	PluginID = "io.github.jzg-lab.bps-sub-plugin"
 	// Version 是插件语义化版本。每次发布前递增。
-	Version = "0.1.0"
+	Version = "0.1.1"
 )

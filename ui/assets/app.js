@@ -65,6 +65,7 @@
     text("st-requests", snapshot.requests !== undefined ? snapshot.requests : "—");
     text("st-inflight", snapshot.in_flight !== undefined ? snapshot.in_flight : "—");
     text("st-failed", snapshot.failed !== undefined ? snapshot.failed : "—");
+    text("st-cancelled", snapshot.cancelled !== undefined ? snapshot.cancelled : "—");
     text("st-host", snapshot.host_services === undefined ? "—" : (snapshot.host_services ? "已连接" : "未连接"));
   }
 

@@ -375,7 +375,8 @@ func TestForwardCancelledContextStopsUpstream(t *testing.T) {
 		return nil
 	}
 	done := make(chan error, 1)
-	go func() { done <- newForwarder(directConfig()).Forward(stream) }()
+	forwarder := newForwarder(directConfig())
+	go func() { done <- forwarder.Forward(stream) }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -385,6 +386,10 @@ func TestForwardCancelledContextStopsUpstream(t *testing.T) {
 	case <-upstreamDone:
 	case <-time.After(5 * time.Second):
 		t.Fatal("upstream request was not cancelled")
+	}
+	// 宿主读完 response.completed 就会关闭流，这不算失败。
+	if forwarder.Stats.Failed.Load() != 0 || forwarder.Stats.Cancelled.Load() != 1 {
+		t.Fatalf("failed=%d cancelled=%d", forwarder.Stats.Failed.Load(), forwarder.Stats.Cancelled.Load())
 	}
 }
 
@@ -397,8 +402,12 @@ func TestForwardSendFailureIsReturned(t *testing.T) {
 	)
 	sendErr := errors.New("host gone")
 	stream.sendFn = func(*pluginv1.ForwardResponse) error { return sendErr }
-	if err := newForwarder(directConfig()).Forward(stream); !errors.Is(err, sendErr) {
+	forwarder := newForwarder(directConfig())
+	if err := forwarder.Forward(stream); !errors.Is(err, sendErr) {
 		t.Fatalf("err = %v", err)
+	}
+	if forwarder.Stats.Failed.Load() != 1 {
+		t.Fatalf("failed = %d", forwarder.Stats.Failed.Load())
 	}
 }
 

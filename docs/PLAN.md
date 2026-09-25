@@ -5,7 +5,7 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部的 **basis
 的降载路由。以 sub2api 官方插件机制（`openai.oauth.outbound_transport.v1`）交付，
 **不改 sub2api 源码**。
 
-> 状态：阶段 0 已在本地准备好（等待强制推送）、阶段 1 已完成。本文随开发进度更新。
+> 状态：阶段 0、阶段 1 已完成，插件已在测试环境跑通。下一步阶段 2。本文随开发进度更新。
 
 ---
 
@@ -75,7 +75,7 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部的 **basis
 
 | 阶段 | 内容 | 产出 | 预估 |
 | --- | --- | --- | --- |
-| **0 清理** ✅ 本地完成 | 把 sub2api 的 main 恢复为纯官方 0.2.8；旧的 basispoints 开关移到 `archive/basispoints-toggle` 分支；测试环境关掉账号级开关 | sub2api 仓库干净 | 0.5 天 |
+| **0 清理** ✅ | 把 sub2api 的 main 恢复为纯官方 0.2.8；旧的 basispoints 开关移到 `archive/basispoints-toggle` 分支；测试环境关掉账号级开关 | sub2api 仓库干净 | 0.5 天 |
 | **1 骨架** ✅ | Go 实现 `TransportPlugin`（GetInfo/Health/Validate/Apply/Test/Forward）；先做「原样透传到 codex」；打包器 + 本地未签名安装跑通 | 能安装、能转发的空插件 | 1–2 天 |
 | **2 basispoints 直转（无工具）** | 路由判定 + 请求头/体改写 + 模型/效率白名单 + 出站栈贴近浏览器（TLS 指纹、连接复用）；不支持工具的请求先屏蔽或降级回 codex | 纯对话可用 | 1–2 天 |
 | **3 工具中转** | catalog 注入 + SSE 实时还原 + 并行调用 + KV 多轮回放 + 图片旁路 | 带工具的 Codex 可用 | 3–5 天，需反复调 |
@@ -114,7 +114,7 @@ bps_sub_plugin/
 ## 7. 决定记录
 
 - [x] 阶段 0：sub2api main 恢复为纯官方 0.2.8（仅保留 README 顶部 fork 说明），旧开关归档到
-      `archive/basispoints-toggle`。强制推送由你执行。（2026-09-25 确认）
+      `archive/basispoints-toggle`。（2026-09-25 确认并已推送）
 - [x] 签名：开发期用 `allow_unsigned` 未签名包；发布期用本项目自建 Ed25519 密钥
       （`go run ./tools/packager keygen`），公钥加到 `plugins.trusted_publishers`。（2026-09-25 确认）
 - [x] Go module：`github.com/jzg-lab/bps_sub_plugin`；插件 ID：`io.github.jzg-lab.bps-sub-plugin`。
@@ -133,3 +133,14 @@ bps_sub_plugin/
   阶段 2 需要评估 basispoints 是否对 TLS 指纹敏感（第 1 节"连接特征敏感"）。
 - 已验证：用 sub2api 0.2.8 自己的安装器、`startPluginRuntime`、`roundTrip` 跑通了
   安装 → 启动 → 配置 → 转发 → 错误帧（在 sub2api 仓库里临时加测试，跑完删除）。
+- 宿主拿到 `response.completed` 后会直接关闭流，插件这边表现为 context canceled。
+  这种情况计入 `cancelled`，不算 `failed`。
+- 升级插件：宿主要求先停用，再上传同 ID 的新版本，然后重新启用。版本号必须改（`internal/buildinfo`）。
+
+## 9. 测试环境
+
+- 位置：测试服务器 `/opt/sub2api-bpstest`，端口 18181，与生产（`/opt/sub2api-deploy`，8080）完全隔离。
+- 镜像：**官方** `ghcr.io/wei-shaw/sub2api:0.2.8`，另加 `PLUGINS_ALLOW_UNSIGNED=true`（仅测试环境）。
+- 切换前的数据库和 compose 备份在 `/opt/sub2api-bpstest/backup/`；旧的账号级 basispoints 开关已从数据库清除。
+- 插件 0.1.1 已安装并启用，灰度 100%（测试环境只有 2 个 OAuth 账号）。
+- 2026-09-25 实测：`/v1/responses` 流式、非流式，`/v1/chat/completions` 都经插件返回 200，失败数 0。

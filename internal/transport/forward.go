@@ -36,6 +36,9 @@ type Stats struct {
 	Total    atomic.Int64
 	InFlight atomic.Int64
 	Failed   atomic.Int64
+	// Cancelled 统计宿主主动结束的流：宿主读到 response.completed 后会直接关闭流，
+	// 这是正常行为，不算失败。
+	Cancelled atomic.Int64
 }
 
 // Forwarder 把宿主的请求帧还原为 HTTP 请求发往上游，再把原始响应按帧回传。
@@ -50,17 +53,33 @@ func (f *Forwarder) Forward(stream Stream) error {
 	f.Stats.Total.Add(1)
 	f.Stats.InFlight.Add(1)
 	defer f.Stats.InFlight.Add(-1)
+	ctx := stream.Context()
+	err := f.forward(ctx, stream)
+	switch {
+	case ctx.Err() != nil:
+		f.Stats.Cancelled.Add(1)
+		return ctx.Err()
+	case errors.Is(err, errFrameSent):
+		f.Stats.Failed.Add(1)
+		return nil
+	case err != nil:
+		f.Stats.Failed.Add(1)
+	}
+	return err
+}
 
+// errFrameSent 表示已经用 error 帧告知宿主失败，流本身正常结束。
+var errFrameSent = errors.New("error frame sent")
+
+func (f *Forwarder) forward(ctx context.Context, stream Stream) error {
 	first, err := stream.Recv()
 	if err != nil {
-		f.Stats.Failed.Add(1)
 		return err
 	}
 	start := first.GetStart()
 	if start == nil {
 		return f.fail(stream, codeInvalidRequest, "首帧必须是 start", false)
 	}
-	ctx := stream.Context()
 	request, err := buildRequest(ctx, start)
 	if err != nil {
 		return f.fail(stream, codeInvalidRequest, err.Error(), false)
@@ -110,7 +129,6 @@ func (f *Forwarder) Forward(stream Stream) error {
 		Headers:       headersToPlugin(response.Header),
 		ContentLength: response.ContentLength,
 	}}}); err != nil {
-		f.Stats.Failed.Add(1)
 		return err
 	}
 
@@ -122,7 +140,6 @@ func (f *Forwarder) Forward(stream Stream) error {
 			received += int64(n)
 			chunk := append([]byte(nil), buffer[:n]...)
 			if err := stream.Send(&pluginv1.ForwardResponse{Frame: &pluginv1.ForwardResponse_BodyChunk{BodyChunk: chunk}}); err != nil {
-				f.Stats.Failed.Add(1)
 				return err
 			}
 		}
@@ -139,13 +156,16 @@ func (f *Forwarder) Forward(stream Stream) error {
 	}}})
 }
 
+// fail 用 error 帧告知宿主失败。发送成功返回 errFrameSent，否则返回发送错误。
 func (f *Forwarder) fail(stream Stream, code, message string, requestSent bool) error {
-	f.Stats.Failed.Add(1)
-	return stream.Send(&pluginv1.ForwardResponse{Frame: &pluginv1.ForwardResponse_Error{Error: &pluginv1.ForwardResponseError{
+	if err := stream.Send(&pluginv1.ForwardResponse{Frame: &pluginv1.ForwardResponse_Error{Error: &pluginv1.ForwardResponseError{
 		Code:        code,
 		Message:     message,
 		RequestSent: requestSent,
-	}}})
+	}}}); err != nil {
+		return err
+	}
+	return errFrameSent
 }
 
 // buildRequest 按 start 帧还原上游请求，但不设置请求体。
