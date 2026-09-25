@@ -75,6 +75,17 @@ func parseNativeCall(item map[string]any) (NativeToolCall, bool) {
 	return call, true
 }
 
+// ParseNativeCall 是 parseNativeCall 的导出版本，供 transport 包在 SSE 还原时使用。
+func ParseNativeCall(item map[string]any) (NativeToolCall, bool) {
+	return parseNativeCall(item)
+}
+
+// IsTransportItem 判断一个 output item 是不是 run_officejs 中转调用（用于统计解码失败）。
+func IsTransportItem(item map[string]any) bool {
+	kind, _ := item["type"].(string)
+	return kind == "function_call" && isTransportName(item["name"])
+}
+
 // RestoreClientCall 把一个原生调用还原成客户端声明的调用。
 // 无法还原（不是本代理认识的中转/工具、schema 不符、JSON 坏）返回 ok=false。
 func RestoreClientCall(native NativeToolCall, catalog *ToolCatalog) (ClientToolCall, bool) {
@@ -302,4 +313,61 @@ func isHex(s string) bool {
 func shortHash(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])[:32]
+}
+
+// ResponseWithToolCalls 用还原后的客户端调用替换 completed 响应里的原生调用，保持其余项不变。
+// 参考 excel-codex-bridge 的 response_payload_with_tool_calls。
+func ResponseWithToolCalls(response map[string]any, calls []ClientToolCall, model string) map[string]any {
+	result := map[string]any{}
+	for k, v := range response {
+		result[k] = v
+	}
+	result["status"] = "completed"
+	if model != "" {
+		result["model"] = model
+	}
+	result["error"] = nil
+	result["incomplete_details"] = nil
+
+	completed := make([]any, len(calls))
+	for i, call := range calls {
+		completed[i] = withStatus(call.asMap(), "completed")
+	}
+	pending := append([]any(nil), completed...)
+
+	var output []any
+	replaced := false
+	if existing, ok := response["output"].([]any); ok {
+		for _, raw := range existing {
+			item, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if kind, _ := item["type"].(string); kind == "function_call" || kind == "custom_tool_call" {
+				replaced = true
+				if len(pending) > 0 {
+					output = append(output, pending[0])
+					pending = pending[1:]
+				}
+				continue
+			}
+			output = append(output, item)
+		}
+	}
+	output = append(output, pending...)
+	if replaced {
+		result["output"] = output
+	} else {
+		result["output"] = completed
+	}
+	return result
+}
+
+func withStatus(item map[string]any, status string) map[string]any {
+	copied := make(map[string]any, len(item)+1)
+	for k, v := range item {
+		copied[k] = v
+	}
+	copied["status"] = status
+	return copied
 }

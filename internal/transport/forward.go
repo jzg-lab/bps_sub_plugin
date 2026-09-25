@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jzg-lab/bps_sub_plugin/internal/basispoints"
 	pluginv1 "github.com/jzg-lab/bps_sub_plugin/internal/pluginapi/v1"
 )
 
@@ -51,6 +52,12 @@ type Stats struct {
 	Fallbacks Counter
 	// BPSStatus 是 basispoints 返回的 HTTP 状态码（连接失败记为 "error"）。
 	BPSStatus Counter
+	// 工具中转计数。
+	ToolRelayed         atomic.Int64 // 还原成客户端工具的调用数
+	ToolReplayed        atomic.Int64 // 回放的历史调用数
+	ToolFallbackRebuilt atomic.Int64 // KV 没命中、fallback 重建的次数
+	ToolDecodeFailed    atomic.Int64 // run_officejs 内层 JSON 解不出
+	KVErrors            atomic.Int64 // KV 读写出错
 }
 
 // Counter 是按字符串键计数的并发安全映射。
@@ -93,8 +100,29 @@ type Forwarder struct {
 	Pool  *Pool
 	Stats *Stats
 
+	// Replayer 供多轮回放查 KV 里记住的原生调用（可空）。
+	replayer basispoints.Replayer
+	// ToolStore 记住这一轮还原出来的原生调用，供下一轮回放（可空）。
+	toolStore ToolStore
+
 	// roundTripper 非空时替代连接池，仅供测试把 chatgpt.com 指向本地服务器。
 	roundTripper http.RoundTripper
+}
+
+// ToolStore 记住原生工具调用，供跨轮回放。
+type ToolStore interface {
+	basispoints.Replayer
+	RememberNativeCall(callID string, native map[string]any)
+}
+
+// SetToolStore 注入工具调用存储（同时用作回放器）。传 nil 关闭工具回放持久化。
+func (f *Forwarder) SetToolStore(store ToolStore) {
+	f.toolStore = store
+	if store == nil {
+		f.replayer = nil
+	} else {
+		f.replayer = store
+	}
 }
 
 // Forward 处理一次完整的转发流。协议错误通过 error 帧告知宿主，返回值只表示流本身出错。

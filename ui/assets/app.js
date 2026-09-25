@@ -8,8 +8,8 @@
   var testButton = document.getElementById("test");
   var refreshButton = document.getElementById("refresh-status");
 
-  var NUMBER_FIELDS = ["response_header_timeout_seconds", "idle_conn_timeout_seconds", "max_idle_conns_per_host", "max_body_bytes"];
-  var BOOLEAN_FIELDS = ["enable_http2", "use_account_proxy", "bps_enabled", "fallback_to_codex"];
+  var NUMBER_FIELDS = ["response_header_timeout_seconds", "idle_conn_timeout_seconds", "max_idle_conns_per_host", "max_body_bytes", "tool_call_ttl_seconds"];
+  var BOOLEAN_FIELDS = ["enable_http2", "use_account_proxy", "bps_enabled", "fallback_to_codex", "tool_relay"];
   var TEXT_FIELDS = ["model_suffix", "bps_user_agent"];
 
   var MODE_LABELS = { passthrough: "原样透传", basispoints_all: "basispoints（全部）", basispoints_suffix: "basispoints（按后缀）" };
@@ -116,6 +116,7 @@
     text("st-cancelled", snapshot.cancelled);
     text("st-routed-bps", snapshot.routed_bps);
     text("st-routed-codex", snapshot.routed_codex);
+    text("st-tool-relayed", snapshot.tool_relayed);
     text("st-host", snapshot.host_services === undefined ? undefined : (snapshot.host_services ? "已连接" : "未连接"));
     text("st-skips", formatCounts(snapshot.skip_reasons));
     text("st-fallbacks", formatCounts(snapshot.fallbacks));

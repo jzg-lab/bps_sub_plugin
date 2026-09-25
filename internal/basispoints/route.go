@@ -33,6 +33,7 @@ const (
 	ReasonHasAttachment   = "has_attachment"
 	ReasonNoAuthorization = "no_authorization"
 	ReasonNoAccountID     = "no_account_id"
+	ReasonToolNonStream   = "tool_non_stream"
 )
 
 // Decision 是路由判定结果。
@@ -45,6 +46,12 @@ type Decision struct {
 	Model string
 	// Body 是解析后的原始请求体，供 BuildBody 使用。
 	Body map[string]any
+	// Catalog 是这轮的客户端工具目录（可能为空）。
+	Catalog *ToolCatalog
+	// Stream 是客户端是否要求流式。
+	Stream bool
+	// HasToolContext 表示这轮带工具或历史里有工具调用，走工具中转路径。
+	HasToolContext bool
 }
 
 // IsResponsesRequest 判断是否是可改写的 Responses 请求（不含 /compact 等子路径）。
@@ -68,12 +75,26 @@ func Decide(cfg config.Config, header http.Header, body []byte) Decision {
 	if !ok {
 		return Decision{Reason: ReasonModelNotAllowed}
 	}
-	if tools, ok := parsed["tools"].([]any); ok && len(tools) > 0 {
-		return Decision{Reason: ReasonHasTools}
-	}
-	if hasToolHistory(parsed["input"]) {
+
+	catalog := ParseTools(parsed)
+	hasToolContext := !catalog.Empty() || hasToolHistory(parsed["input"])
+	if hasToolContext && !cfg.ToolRelay {
+		// 工具中转关闭：带工具的请求回到阶段 2 行为，走 codex。
+		if !catalog.Empty() {
+			return Decision{Reason: ReasonHasTools}
+		}
 		return Decision{Reason: ReasonHasToolHistory}
 	}
+
+	stream := true
+	if value, ok := parsed["stream"].(bool); ok {
+		stream = value
+	}
+	if hasToolContext && !stream {
+		// 工具中转只在流式做（SSE 实时还原）；非流式带工具走 codex。
+		return Decision{Reason: ReasonToolNonStream}
+	}
+
 	if hasAttachment(parsed["input"]) {
 		return Decision{Reason: ReasonHasAttachment}
 	}
@@ -83,7 +104,7 @@ func Decide(cfg config.Config, header http.Header, body []byte) Decision {
 	if strings.TrimSpace(header.Get("Chatgpt-Account-Id")) == "" {
 		return Decision{Reason: ReasonNoAccountID}
 	}
-	return Decision{Route: true, Model: model, Body: parsed}
+	return Decision{Route: true, Model: model, Body: parsed, Catalog: catalog, Stream: stream, HasToolContext: hasToolContext}
 }
 
 // parseObject 解析 JSON 对象，数字保留原样（json.Number），避免大整数失真。

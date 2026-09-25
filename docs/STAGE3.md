@@ -159,11 +159,11 @@ basispoints 不接受客户端声明的 `tools`（带了就 422）。做法（�
 - [x] **T2 catalog + 工具解析**：`internal/basispoints/tools.go`：解析 tools（含 namespace）、
       生成 catalog/reminder developer 消息、内层 envelope 解码（含 JSON 反斜杠修复）、schema 校验、
       原生调用 → 客户端调用还原、fallback 重建、update_plan 双向转换。纯函数，全测试覆盖。
-- [ ] **T3 路由 + 请求体**：route.go 把"带工具/有工具历史"从 skip 改为进入中转；BuildBody 注入
+- [x] **T3 路由 + 请求体**：route.go 把"带工具/有工具历史"从 skip 改为进入中转；BuildBody 注入
       catalog、扩展 translateInput 做历史回放；非流式带工具仍走 codex。测试。
-- [ ] **T4 SSE 还原**：`internal/transport/toolstream.go`：SSE 解析器 + 扣留 + completed 时还原 +
+- [x] **T4 SSE 还原**：`internal/transport/toolstream.go`：SSE 解析器 + 扣留 + completed 时还原 +
       重新合成事件 + keepalive + 断流补完。用合成的上游 SSE 流做单测（含并行调用、非工具、断流）。
-- [ ] **T5 KV 映射 + 接线**：KV 存取（宿主 KV，降级进程内 LRU）；forwardResponses 里带工具的
+- [x] **T5 KV 映射 + 接线**：KV 存取（宿主 KV，降级进程内 LRU）；forwardResponses 里带工具的
       basispoints 响应经 toolstream 变换；回放时查 KV。统计接入。
 - [ ] **T6 测试环境实测**：版本 0.3.0，打包上传（停用→上传→启用）。用真实 Codex 风格请求测：
   1. `tool_relay=false`：带工具走 codex（回归到阶段 2 行为）。
@@ -190,3 +190,12 @@ basispoints 不接受客户端声明的 `tools`（带了就 422）。做法（�
 - **2026-09-25 T2 ✅**：`internal/basispoints/tools.go`（目录解析、catalog/reminder 生成）、`relay.go`
   （原生调用 → 客户端调用还原、run_officejs 解包含双层嵌套、JSON 反斜杠修复、直呼工具名兼容）、
   `schema.go`（轻量 JSON Schema 校验、update_plan 双向转换）。全测试通过。
+- **2026-09-25 T3-T5 ✅**：
+  - T3：route.go 把带工具/有工具历史的请求引入中转路径（`tool_relay` 关或非流式则回 codex，
+    原因码 `has_tools`/`has_tool_history`/`tool_non_stream`）；BuildBody 注入 catalog、translateInput
+    回放工具调用/结果（update_plan 特例、KV 命中原样回放、未命中 fallback 重建、结果归一化）。
+  - T4：`internal/transport/toolstream.go` SSE 状态机——扣留原生工具事件，completed 时还原成客户端
+    调用并重新合成事件序列，非工具响应透传，断流用已完成项补 completed。测试覆盖单调用/并行/非工具/断流/422 回落。
+  - T5：`internal/tools/store.go` KV 存取（宿主 KV + 进程内 LRU 降级），接入 server（InitHostServices
+    设 host、ApplyConfig 更新 TTL）；状态加 `tool_relayed`/`tool_decode_failed`/`kv_errors`；配置页加
+    工具中转开关、TTL、工具中转次数。全测试（含 race）通过。

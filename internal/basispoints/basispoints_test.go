@@ -17,6 +17,12 @@ func enabledConfig() config.Config {
 	return cfg
 }
 
+func relayOffConfig() config.Config {
+	cfg := enabledConfig()
+	cfg.ToolRelay = false
+	return cfg
+}
+
 func identityHeader() http.Header {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer tok")
@@ -69,9 +75,9 @@ func TestDecideReasons(t *testing.T) {
 		{"trailing data", enabledConfig(), identityHeader(), `{"model":"gpt-5.6-sol"} {}`, ReasonBadBody},
 		{"no model", enabledConfig(), identityHeader(), `{}`, ReasonModelNotAllowed},
 		{"other model", enabledConfig(), identityHeader(), `{"model":"gpt-5.5"}`, ReasonModelNotAllowed},
-		{"tools", enabledConfig(), identityHeader(), `{"model":"gpt-5.6-sol","tools":[{"type":"function","name":"x"}]}`, ReasonHasTools},
-		{"tool history", enabledConfig(), identityHeader(), `{"model":"gpt-5.6-sol","input":[{"type":"function_call_output","call_id":"c","output":"x"}]}`, ReasonHasToolHistory},
-		{"tool role", enabledConfig(), identityHeader(), `{"model":"gpt-5.6-sol","input":[{"role":"tool","content":"x"}]}`, ReasonHasToolHistory},
+		{"tools relay off", relayOffConfig(), identityHeader(), `{"model":"gpt-5.6-sol","tools":[{"type":"function","name":"x"}]}`, ReasonHasTools},
+		{"tool history relay off", relayOffConfig(), identityHeader(), `{"model":"gpt-5.6-sol","input":[{"type":"function_call_output","call_id":"c","output":"x"}]}`, ReasonHasToolHistory},
+		{"tool non-stream", enabledConfig(), identityHeader(), `{"model":"gpt-5.6-sol","stream":false,"tools":[{"type":"function","name":"x"}]}`, ReasonToolNonStream},
 		{"image", enabledConfig(), identityHeader(), `{"model":"gpt-5.6-sol","input":[{"role":"user","content":[{"type":"input_image","image_url":"data:"}]}]}`, ReasonHasAttachment},
 		{"no auth", enabledConfig(), http.Header{"Chatgpt-Account-Id": {"a"}}, `{"model":"gpt-5.6-sol"}`, ReasonNoAuthorization},
 		{"no account", enabledConfig(), http.Header{"Authorization": {"Bearer t"}}, `{"model":"gpt-5.6-sol"}`, ReasonNoAccountID},
@@ -148,7 +154,7 @@ func build(t *testing.T, body string) map[string]any {
 	if !decision.Route {
 		t.Fatalf("expected route, got %q", decision.Reason)
 	}
-	raw, err := BuildBody(decision)
+	raw, err := BuildBody(decision, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

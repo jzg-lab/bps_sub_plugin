@@ -30,6 +30,7 @@
         <div><dt>宿主提前结束</dt><dd id="st-cancelled">—</dd></div>
         <div><dt>走 basispoints</dt><dd id="st-routed-bps">—</dd></div>
         <div><dt>走 codex</dt><dd id="st-routed-codex">—</dd></div>
+        <div><dt>工具中转次数</dt><dd id="st-tool-relayed">—</dd></div>
         <div><dt>宿主服务</dt><dd id="st-host">—</dd></div>
       </dl>
       <dl class="status-lists">
@@ -68,6 +69,14 @@
         <label class="check">
           <input type="checkbox" name="fallback_to_codex">
           <span>basispoints 拒绝时回落 codex（模型无权限、请求体不兼容、被 Cloudflare 拦截、连接失败）</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="tool_relay">
+          <span><strong>工具中转</strong>：带工具的流式请求也走 basispoints（关闭则带工具的请求走 codex）</span>
+        </label>
+        <label class="field">
+          <span>工具调用映射存活时间（秒）</span>
+          <input type="number" name="tool_call_ttl_seconds" min="60" max="7776000" step="1" required>
         </label>
         <label class="field wide">
           <span>basispoints User-Agent</span>

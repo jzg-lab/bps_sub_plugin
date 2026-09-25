@@ -55,7 +55,7 @@ func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transpo
 		return f.sendCodex(ctx, stream, transport, request, buffered, false)
 	}
 
-	bpsBody, err := basispoints.BuildBody(decision)
+	bpsBody, err := basispoints.BuildBody(decision, f.replayer)
 	if err != nil {
 		f.Stats.Fallbacks.Add(fallbackRewrite)
 		return f.sendCodex(ctx, stream, transport, request, buffered, false)
@@ -98,6 +98,9 @@ func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transpo
 		response.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(peeked), response.Body), Closer: response.Body}
 	}
 	f.Stats.RoutedBPS.Add(1)
+	if decision.HasToolContext {
+		return f.relayToolStream(stream, response, started, decision)
+	}
 	return f.relay(stream, response, started)
 }
 

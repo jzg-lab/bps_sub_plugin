@@ -155,10 +155,11 @@ func TestResponsesSkippedGoToCodexUnchanged(t *testing.T) {
 		mutate func(*config.Config)
 		reason string
 	}{
-		"disabled":  {routableBody, func(c *config.Config) { c.BPSEnabled = false }, ""},
-		"model":     {`{"model":"gpt-5.5","input":"hi"}`, nil, "model_not_allowed"},
-		"tools":     {`{"model":"gpt-5.6-sol","tools":[{"type":"function","name":"shell"}],"input":"hi"}`, nil, "has_tools"},
-		"too large": {`{"model":"gpt-5.6-sol","input":"` + strings.Repeat("x", 2<<20) + `"}`, func(c *config.Config) { c.MaxBodyBytes = 1 << 20 }, "body_too_large"},
+		"disabled":        {routableBody, func(c *config.Config) { c.BPSEnabled = false }, ""},
+		"model":           {`{"model":"gpt-5.5","input":"hi"}`, nil, "model_not_allowed"},
+		"tools relay off": {`{"model":"gpt-5.6-sol","tools":[{"type":"function","name":"shell"}],"input":"hi"}`, func(c *config.Config) { c.ToolRelay = false }, "has_tools"},
+		"tool non-stream": {`{"model":"gpt-5.6-sol","stream":false,"tools":[{"type":"function","name":"shell"}],"input":"hi"}`, nil, "tool_non_stream"},
+		"too large":       {`{"model":"gpt-5.6-sol","input":"` + strings.Repeat("x", 2<<20) + `"}`, func(c *config.Config) { c.MaxBodyBytes = 1 << 20 }, "body_too_large"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

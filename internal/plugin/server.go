@@ -12,6 +12,7 @@ import (
 	"github.com/jzg-lab/bps_sub_plugin/internal/buildinfo"
 	"github.com/jzg-lab/bps_sub_plugin/internal/config"
 	pluginv1 "github.com/jzg-lab/bps_sub_plugin/internal/pluginapi/v1"
+	"github.com/jzg-lab/bps_sub_plugin/internal/tools"
 	"github.com/jzg-lab/bps_sub_plugin/internal/transport"
 )
 
@@ -25,6 +26,7 @@ type Server struct {
 	pool      *transport.Pool
 	stats     *transport.Stats
 	forwarder *transport.Forwarder
+	store     *tools.Store
 	startedAt time.Time
 
 	mu     sync.Mutex
@@ -34,12 +36,17 @@ type Server struct {
 
 // New 创建使用默认配置的插件服务。宿主启用插件后会通过 ApplyConfig 下发已保存配置。
 func New() *Server {
-	pool := transport.NewPool(config.Default())
+	cfg := config.Default()
+	pool := transport.NewPool(cfg)
 	stats := &transport.Stats{}
+	store := tools.New(time.Duration(cfg.ToolCallTTLSeconds)*time.Second, func() { stats.KVErrors.Add(1) })
+	forwarder := &transport.Forwarder{Pool: pool, Stats: stats}
+	forwarder.SetToolStore(store)
 	return &Server{
 		pool:      pool,
 		stats:     stats,
-		forwarder: &transport.Forwarder{Pool: pool, Stats: stats},
+		forwarder: forwarder,
+		store:     store,
 		startedAt: time.Now(),
 	}
 }
@@ -71,6 +78,10 @@ type status struct {
 	SkipReasons map[string]int64 `json:"skip_reasons"`
 	Fallbacks   map[string]int64 `json:"fallbacks"`
 	BPSStatus   map[string]int64 `json:"bps_status"`
+
+	ToolRelayed      int64 `json:"tool_relayed"`
+	ToolDecodeFailed int64 `json:"tool_decode_failed"`
+	KVErrors         int64 `json:"kv_errors"`
 }
 
 func (s *Server) Health(context.Context, *pluginv1.HealthRequest) (*pluginv1.HealthResponse, error) {
@@ -83,20 +94,23 @@ func (s *Server) Health(context.Context, *pluginv1.HealthRequest) (*pluginv1.Hea
 		mode = "basispoints_" + cfg.RouteMode
 	}
 	data, _ := json.Marshal(status{
-		Version:       buildinfo.Version,
-		Mode:          mode,
-		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
-		Requests:      s.stats.Total.Load(),
-		InFlight:      s.stats.InFlight.Load(),
-		Failed:        s.stats.Failed.Load(),
-		Cancelled:     s.stats.Cancelled.Load(),
-		HostServices:  hostReady,
-		Config:        cfg,
-		RoutedBPS:     s.stats.RoutedBPS.Load(),
-		RoutedCodex:   s.stats.RoutedCodex.Load(),
-		SkipReasons:   s.stats.SkipReasons.Snapshot(),
-		Fallbacks:     s.stats.Fallbacks.Snapshot(),
-		BPSStatus:     s.stats.BPSStatus.Snapshot(),
+		Version:          buildinfo.Version,
+		Mode:             mode,
+		UptimeSeconds:    int64(time.Since(s.startedAt).Seconds()),
+		Requests:         s.stats.Total.Load(),
+		InFlight:         s.stats.InFlight.Load(),
+		Failed:           s.stats.Failed.Load(),
+		Cancelled:        s.stats.Cancelled.Load(),
+		HostServices:     hostReady,
+		Config:           cfg,
+		RoutedBPS:        s.stats.RoutedBPS.Load(),
+		RoutedCodex:      s.stats.RoutedCodex.Load(),
+		SkipReasons:      s.stats.SkipReasons.Snapshot(),
+		Fallbacks:        s.stats.Fallbacks.Snapshot(),
+		BPSStatus:        s.stats.BPSStatus.Snapshot(),
+		ToolRelayed:      s.stats.ToolRelayed.Load(),
+		ToolDecodeFailed: s.stats.ToolDecodeFailed.Load(),
+		KVErrors:         s.stats.KVErrors.Load(),
 	})
 	return &pluginv1.HealthResponse{Healthy: true, Message: "ok", StatusJson: string(data)}, nil
 }
@@ -115,6 +129,7 @@ func (s *Server) ApplyConfig(_ context.Context, request *pluginv1.ApplyConfigReq
 		return &pluginv1.ApplyConfigResponse{Applied: false, Message: err.Error()}, nil
 	}
 	s.pool.Apply(cfg)
+	s.store.SetTTL(time.Duration(cfg.ToolCallTTLSeconds) * time.Second)
 	return &pluginv1.ApplyConfigResponse{Applied: true}, nil
 }
 
@@ -170,7 +185,9 @@ func (s *Server) InitHostServices(_ context.Context, request *pluginv1.InitHostS
 		return &pluginv1.InitHostServicesResponse{Ready: false, Message: "连接宿主服务失败: " + err.Error()}, nil
 	}
 	s.mu.Lock()
-	s.host = pluginv1.NewHostServiceClient(conn)
+	client := pluginv1.NewHostServiceClient(conn)
+	s.host = client
 	s.mu.Unlock()
+	s.store.SetHost(client)
 	return &pluginv1.InitHostServicesResponse{Ready: true}, nil
 }
