@@ -13,10 +13,11 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部 **basispoi
 
 ## 状态
 
-**阶段 3 已完成（0.3.0）**：在配置页打开「启用 basispoints 改写」后，满足条件的请求改走 basispoints，
+**阶段 4 已完成（0.4.0）**：在配置页打开「启用 basispoints 改写」后，满足条件的请求改走 basispoints，
 其余照旧发往 codex：
 
 - 模型在白名单内（默认 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-6-astra`）；不带图片或文件。
+- **图片也支持**：user 消息里的内联图片先上传到 basispoints 附件端点，再用返回的 file_id 引用（带缓存、失败降级）。带远程 URL 图片、文件、音频的请求仍走 codex。
 - **带工具的请求也支持**（工具中转，默认开）：basispoints 不收客户端工具，插件把工具写进提示词目录，
   模型经 `run_officejs` 发起调用，插件在 SSE 流里实时还原成 Codex 声明的 `function_call`/`custom_tool_call`，
   多轮之间用宿主 KV 回放工具调用与结果。function、custom（apply_patch）、update_plan、并行调用都支持。
@@ -24,7 +25,7 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部 **basispoi
 basispoints 拒绝请求（模型无权限、请求体不兼容、被 Cloudflare 拦截、连不上）时自动回落 codex。
 配置页能看到路由、回落、工具中转的计数。默认**不启用 basispoints**，升级插件不会改变现有行为。
 
-已知限制：推理强度最高 `xhigh`（`max` 降为 `xhigh`）；带图片/文件的请求走 codex（未做附件上传）；
+已知限制：推理强度最高 `xhigh`（`max` 降为 `xhigh`）；文件/音频、远程 URL 图片走 codex；
 「按后缀」路由模式在 sub2api 0.2.8 上不可用。
 进度见 [docs/PLAN.md](docs/PLAN.md)；阶段 2/3 细节见 [docs/STAGE2.md](docs/STAGE2.md)、[docs/STAGE3.md](docs/STAGE3.md)。
 
