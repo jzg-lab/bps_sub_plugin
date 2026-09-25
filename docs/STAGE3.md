@@ -1,6 +1,6 @@
 # 阶段 3 执行计划：工具中转
 
-> **状态：计划中。**
+> **状态：阶段 3 已完成（插件 0.3.0）。**
 >
 > 阶段 3 的**工作底稿**：先写计划，再按「执行清单」逐条做，每步勾选并在「执行记录」追加结果。
 > 上下文被压缩后，从第一个没勾的步骤继续。总体路线见 [PLAN.md](PLAN.md)，阶段 2 见 [STAGE2.md](STAGE2.md)。
@@ -165,7 +165,7 @@ basispoints 不接受客户端声明的 `tools`（带了就 422）。做法（�
       重新合成事件 + keepalive + 断流补完。用合成的上游 SSE 流做单测（含并行调用、非工具、断流）。
 - [x] **T5 KV 映射 + 接线**：KV 存取（宿主 KV，降级进程内 LRU）；forwardResponses 里带工具的
       basispoints 响应经 toolstream 变换；回放时查 KV。统计接入。
-- [ ] **T6 测试环境实测**：版本 0.3.0，打包上传（停用→上传→启用）。用真实 Codex 风格请求测：
+- [x] **T6 测试环境实测**：版本 0.3.0，打包上传（停用→上传→启用）。用真实 Codex 风格请求测：
   1. `tool_relay=false`：带工具走 codex（回归到阶段 2 行为）。
   2. 打开后：带 `exec_command`(shell) 的请求 → 走 bps，模型发起调用，插件还原成 function_call，
      回放结果后模型给出正确答案（pwd / ls 之类）。
@@ -175,7 +175,7 @@ basispoints 不接受客户端声明的 `tools`（带了就 422）。做法（�
   6. 多轮（调用→结果→再调用）→ KV 回放，encrypted reasoning 不报错。
   7. 用真实 Codex CLI 指向测试网关跑一个小任务（读文件、改文件），看能不能跑通。
   8. 宿主日志无错误，插件统计合理，失败数低。
-- [ ] **T7 收尾**：更新 README、PLAN.md（阶段 3 打勾）、本文；提交并推送。
+- [x] **T7 收尾**：更新 README、PLAN.md（阶段 3 打勾）、本文；提交并推送。
 
 ## 5. 执行记录
 
@@ -199,3 +199,26 @@ basispoints 不接受客户端声明的 `tools`（带了就 422）。做法（�
   - T5：`internal/tools/store.go` KV 存取（宿主 KV + 进程内 LRU 降级），接入 server（InitHostServices
     设 host、ApplyConfig 更新 TTL）；状态加 `tool_relayed`/`tool_decode_failed`/`kv_errors`；配置页加
     工具中转开关、TTL、工具中转次数。全测试（含 race）通过。
+- **2026-09-25 T6 ✅**（插件 0.3.0，测试环境，灰度 100%，经账号代理）：
+
+  | 检查 | 结果 |
+  |---|---|
+  | 1 tool_relay 关闭 | 带工具请求走 codex（`has_tools`），回归到阶段 2 行为 |
+  | 2 exec_command（function）| 走 bps，还原成 `function_call name=exec_command arguments={"cmd":"echo hello-bps-tool"}`，run_officejs 不进 output |
+  | 3 apply_patch（custom）| 还原成 `custom_tool_call`，input 是完整原始 patch 文本 |
+  | 4 update_plan | 原生 function_call，plan 正常 |
+  | 5 并行调用 | parallel_tool_calls 下多个 exec_command 都还原 |
+  | 6 多轮 | 第一轮还原调用 → 回放 function_call_output（经宿主 KV，`kv_errors=0`）→ 第二轮模型答出 `hi42` |
+  | 8 日志 | 20 分钟内宿主无 WARN/ERROR，插件 `failed=0`、`tool_decode_failed=0` |
+
+  说明：
+  - **非流式带工具**：宿主在阶段 2 前就把 `stream` 强制成 true 再交给插件，所以插件对客户端的
+    非流式请求也是流式发 bps、宿主再聚合成 JSON 返回。output 里的调用已正确还原成 exec_command，功能正常。
+    （route.go 里的 `tool_non_stream` 判定基于插件收到的 stream 值，实际总是 true，所以这条分支在
+    宿主前置改写下不会触发——留着作为防御，无害。）
+  - 非流式响应 JSON 里 `tools[24].name` 仍是 `run_officejs`：那是 basispoints **回显它自己的原生工具目录**
+    （我们没发客户端 tools，它填了自带的），不是我们的 output。Codex 读 `output`，不读回显的 tools，无影响。
+  - 未做检查 7（真实 Codex CLI）：测试服务器没装 codex。但流式 function_call/custom_tool_call 的线协议
+    和多轮回放已按 Codex 的形态逐一验证。
+- **2026-09-25 T7 ✅**：README、PLAN.md 更新到阶段 3 完成；版本 0.3.0 已部署测试环境
+  （`bps_enabled=true`、`route_mode=all`、`tool_relay=true`）。提交并推送。

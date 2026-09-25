@@ -5,7 +5,7 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部的 **basis
 的降载路由。以 sub2api 官方插件机制（`openai.oauth.outbound_transport.v1`）交付，
 **不改 sub2api 源码**。
 
-> 状态：阶段 0、1、2 已完成（插件 0.2.1 在测试环境运行，纯对话已走 basispoints）。**阶段 3 进行中，执行计划见 [STAGE3.md](STAGE3.md)**。阶段 2 的计划与执行记录见 [STAGE2.md](STAGE2.md)。本文随开发进度更新。
+> 状态：阶段 0、1、2、3 已完成（插件 0.3.0 在测试环境运行，带工具的 Codex 请求已走 basispoints）。各阶段执行记录见 [STAGE2.md](STAGE2.md)、[STAGE3.md](STAGE3.md)。下一步阶段 4（配置页完善 + 验收 + 签名发布）。本文随开发进度更新。
 
 ---
 
@@ -78,7 +78,7 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部的 **basis
 | **0 清理** ✅ | 把 sub2api 的 main 恢复为纯官方 0.2.8；旧的 basispoints 开关移到 `archive/basispoints-toggle` 分支；测试环境关掉账号级开关 | sub2api 仓库干净 | 0.5 天 |
 | **1 骨架** ✅ | Go 实现 `TransportPlugin`（GetInfo/Health/Validate/Apply/Test/Forward）；先做「原样透传到 codex」；打包器 + 本地未签名安装跑通 | 能安装、能转发的空插件 | 1–2 天 |
 | **2 basispoints 直转（无工具）** ✅ | 路由判定 + 请求头/体改写 + 模型/效率白名单 + 出站栈贴近浏览器（TLS 指纹、连接复用）；不支持工具的请求先屏蔽或降级回 codex | 纯对话可用 | 1–2 天 |
-| **3 工具中转** | catalog 注入 + SSE 实时还原 + 并行调用 + KV 多轮回放 + 图片旁路 | 带工具的 Codex 可用 | 3–5 天，需反复调 |
+| **3 工具中转** ✅ | catalog 注入 + SSE 实时还原 + 并行调用 + KV 多轮回放 + 图片旁路 | 带工具的 Codex 可用 | 3–5 天，需反复调 |
 | **4 配置页 + 验收** | UI Bridge 配置页（模型白名单、效率映射、工具开关、灰度）；单测 + 宿主集成测试；测试服灰度实测 | 可发布的签名包 | 1–2 天 |
 
 ## 5. 目录结构（阶段 1 建立）

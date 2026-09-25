@@ -13,17 +13,20 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部 **basispoi
 
 ## 状态
 
-**阶段 2 已完成（0.2.1）**：在配置页打开「启用 basispoints 改写」后，满足以下条件的请求改走 basispoints，
-其余请求照旧发往 codex：
+**阶段 3 已完成（0.3.0）**：在配置页打开「启用 basispoints 改写」后，满足条件的请求改走 basispoints，
+其余照旧发往 codex：
 
-- 模型在白名单内（默认 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-6-astra`）；
-- 请求**不带工具**、历史里没有工具调用、没有图片或文件（这些要等阶段 3）。
+- 模型在白名单内（默认 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-6-astra`）；不带图片或文件。
+- **带工具的请求也支持**（工具中转，默认开）：basispoints 不收客户端工具，插件把工具写进提示词目录，
+  模型经 `run_officejs` 发起调用，插件在 SSE 流里实时还原成 Codex 声明的 `function_call`/`custom_tool_call`，
+  多轮之间用宿主 KV 回放工具调用与结果。function、custom（apply_patch）、update_plan、并行调用都支持。
 
-basispoints 拒绝请求（模型无权限、请求体不兼容、被 Cloudflare 拦截、连不上）时，自动回落 codex。
-配置页能看到每种情况的计数。默认**不启用**，升级插件不会改变现有行为。
+basispoints 拒绝请求（模型无权限、请求体不兼容、被 Cloudflare 拦截、连不上）时自动回落 codex。
+配置页能看到路由、回落、工具中转的计数。默认**不启用 basispoints**，升级插件不会改变现有行为。
 
-已知限制：推理强度最高 `xhigh`（`max` 会降为 `xhigh`）；「按后缀」路由模式在 sub2api 0.2.8 上不可用。
-进度见 [docs/PLAN.md](docs/PLAN.md)，阶段 2 细节见 [docs/STAGE2.md](docs/STAGE2.md)。
+已知限制：推理强度最高 `xhigh`（`max` 降为 `xhigh`）；带图片/文件的请求走 codex（未做附件上传）；
+「按后缀」路由模式在 sub2api 0.2.8 上不可用。
+进度见 [docs/PLAN.md](docs/PLAN.md)；阶段 2/3 细节见 [docs/STAGE2.md](docs/STAGE2.md)、[docs/STAGE3.md](docs/STAGE3.md)。
 
 ## 构建
 
@@ -72,8 +75,9 @@ cmd/bps-plugin/          插件入口，只调用 pluginv1.Serve
 internal/buildinfo/      插件 ID 和版本（GetInfo 与 manifest 共用）
 internal/config/         配置解析、校验、默认值
 internal/plugin/         TransportPlugin gRPC 服务
-internal/basispoints/    路由判定、请求头/体改写（纯函数）
-internal/transport/      Forward 流 ↔ HTTP 请求转换、basispoints 发送与回落、连接池
+internal/basispoints/    路由判定、请求头/体改写、工具目录与调用还原（纯函数）
+internal/tools/          工具调用映射存储（宿主 KV + 进程内 LRU 降级）
+internal/transport/      Forward 流 ↔ HTTP 请求转换、basispoints 发送与回落、SSE 工具还原、连接池
 internal/pluginapi/v1/   sub2api 插件契约副本（见其中 UPSTREAM.md）
 ui/                      配置页（UI Bridge v1）
 tools/packager/          构建、生成 manifest、签名、打包
