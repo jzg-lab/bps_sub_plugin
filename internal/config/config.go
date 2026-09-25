@@ -59,6 +59,12 @@ type Config struct {
 	ToolRelay bool `json:"tool_relay"`
 	// ToolCallTTLSeconds 是工具调用映射在 KV 里的存活时间（秒）。
 	ToolCallTTLSeconds int `json:"tool_call_ttl_seconds"`
+
+	// ImageSupport 为 true 时，带图片的请求把图片上传到 basispoints 附件端点后改走 basispoints；
+	// 关闭时带图片的请求走 codex（阶段 3 行为）。仅在 BPSEnabled 时有意义。
+	ImageSupport bool `json:"image_support"`
+	// MaxImageBytes 是单张图片解码后允许上传的上限，超过就降级成文本。
+	MaxImageBytes int64 `json:"max_image_bytes"`
 }
 
 // Default 返回默认配置。
@@ -80,6 +86,9 @@ func Default() Config {
 
 		ToolRelay:          true,
 		ToolCallTTLSeconds: 7 * 24 * 60 * 60,
+
+		ImageSupport:  true,
+		MaxImageBytes: 10 << 20,
 	}
 }
 
@@ -164,6 +173,9 @@ func (c Config) Validate() error {
 	}
 	if c.ToolCallTTLSeconds < 60 || c.ToolCallTTLSeconds > 90*24*60*60 {
 		return errors.New("tool_call_ttl_seconds 必须在 60 秒到 90 天之间")
+	}
+	if c.MaxImageBytes < 1<<10 || c.MaxImageBytes > 64<<20 {
+		return errors.New("max_image_bytes 必须在 1 KiB 到 64 MiB 之间")
 	}
 	return nil
 }

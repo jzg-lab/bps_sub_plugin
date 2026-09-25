@@ -52,6 +52,8 @@ type Decision struct {
 	Stream bool
 	// HasToolContext 表示这轮带工具或历史里有工具调用，走工具中转路径。
 	HasToolContext bool
+	// HasImages 表示 input 里有可上传的内联图片。
+	HasImages bool
 }
 
 // IsResponsesRequest 判断是否是可改写的 Responses 请求（不含 /compact 等子路径）。
@@ -95,16 +97,23 @@ func Decide(cfg config.Config, header http.Header, body []byte) Decision {
 		return Decision{Reason: ReasonToolNonStream}
 	}
 
-	if hasAttachment(parsed["input"]) {
+	// 附件分两类：图片可以上传后走 basispoints（image_support 开时）；
+	// 其它文件/音频，或不认识的附件，一律走 codex。
+	images, others := classifyAttachments(parsed["input"])
+	if others {
 		return Decision{Reason: ReasonHasAttachment}
 	}
+	if images && !cfg.ImageSupport {
+		return Decision{Reason: ReasonHasAttachment}
+	}
+
 	if strings.TrimSpace(header.Get("Authorization")) == "" {
 		return Decision{Reason: ReasonNoAuthorization}
 	}
 	if strings.TrimSpace(header.Get("Chatgpt-Account-Id")) == "" {
 		return Decision{Reason: ReasonNoAccountID}
 	}
-	return Decision{Route: true, Model: model, Body: parsed, Catalog: catalog, Stream: stream, HasToolContext: hasToolContext}
+	return Decision{Route: true, Model: model, Body: parsed, Catalog: catalog, Stream: stream, HasToolContext: hasToolContext, HasImages: images}
 }
 
 // parseObject 解析 JSON 对象，数字保留原样（json.Number），避免大整数失真。
@@ -184,30 +193,31 @@ func hasToolHistory(input any) bool {
 	return false
 }
 
-var attachmentTypes = map[string]bool{
-	"input_image": true,
-	"image_url":   true,
-	"input_file":  true,
-	"input_audio": true,
-}
-
-// hasAttachment 判断输入里是否有图片、文件或音频。basispoints 拒收内联图片，
-// 需要先上传附件，本阶段不做。
-func hasAttachment(value any) bool {
+// classifyAttachments 遍历输入，返回是否有可上传的内联图片（images），以及是否有
+// 其它无法处理的附件（others：非 data 的图片、文件、音频）。others 命中就必须走 codex。
+func classifyAttachments(value any) (images bool, others bool) {
 	switch typed := value.(type) {
 	case []any:
 		for _, item := range typed {
-			if hasAttachment(item) {
-				return true
-			}
+			i, o := classifyAttachments(item)
+			images = images || i
+			others = others || o
 		}
 	case map[string]any:
-		if kind, _ := typed["type"].(string); attachmentTypes[kind] {
-			return true
+		switch kind, _ := typed["type"].(string); kind {
+		case "input_image":
+			if url, ok := typed["image_url"].(string); ok && strings.HasPrefix(url, "data:") {
+				images = true
+			} else {
+				others = true // 非 data URL 的图片（远程 URL / file_id），交给 codex
+			}
+			return images, others
+		case "image_url", "input_file", "input_audio":
+			return false, true
 		}
 		if content, ok := typed["content"]; ok {
-			return hasAttachment(content)
+			return classifyAttachments(content)
 		}
 	}
-	return false
+	return images, others
 }

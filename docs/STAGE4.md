@@ -100,8 +100,8 @@
 
 ## 4. 执行清单
 
-- [ ] **I1 配置**：加 `image_support`、`max_image_bytes`（校验、测试）。
-- [ ] **I2 图片纯函数**：`internal/basispoints/images.go`：FindImages、ReplaceImages、DecodeDataURL、
+- [x] **I1 配置**：加 `image_support`、`max_image_bytes`（校验、测试）。
+- [x] **I2 图片纯函数**：`internal/basispoints/images.go`：FindImages、ReplaceImages、DecodeDataURL、
       扩展名映射；route.go 区分图片与其它附件、加 `HasImages`、`image_support` 开关。全测试覆盖。
 - [ ] **I3 上传器 + 缓存**：`internal/transport/attachments.go`：上传 multipart 请求、进程内 LRU 缓存、
       按 media_type 命名。用 httptest 假 attachments 服务器测（成功、4xx、连接失败、缓存命中）。
@@ -122,3 +122,7 @@
 - **2026-09-25 探针**：attachments 上传实测——账号 1 上传 1x1 PNG 返回 200 `openai_file_id`；
   引用 file_id 的视觉请求返回 429（额度用尽，非 422），说明 body 形态被接受。账号 2 是
   `deactivated_workspace`（402）。上传机制确认可行，端到端视觉回复受测试账号额度限制。
+- **2026-09-25 I1 ✅**：加 `image_support`（默认 true）、`max_image_bytes`（默认 10 MiB，1 KiB~64 MiB）。
+- **2026-09-25 I2 ✅**：`internal/basispoints/images.go`（FindImages 去重、ReplaceImages 不改原 body、
+  DecodeDataURL、ImageFileName）；route.go 用 classifyAttachments 区分内联图片和其它附件，
+  只有内联图片且 image_support 开时才路由，远程图片/文件/音频仍走 codex。全测试通过。

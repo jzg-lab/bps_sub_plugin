@@ -23,6 +23,12 @@ func relayOffConfig() config.Config {
 	return cfg
 }
 
+func imageOffConfig() config.Config {
+	cfg := enabledConfig()
+	cfg.ImageSupport = false
+	return cfg
+}
+
 func identityHeader() http.Header {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer tok")
@@ -78,7 +84,9 @@ func TestDecideReasons(t *testing.T) {
 		{"tools relay off", relayOffConfig(), identityHeader(), `{"model":"gpt-5.6-sol","tools":[{"type":"function","name":"x"}]}`, ReasonHasTools},
 		{"tool history relay off", relayOffConfig(), identityHeader(), `{"model":"gpt-5.6-sol","input":[{"type":"function_call_output","call_id":"c","output":"x"}]}`, ReasonHasToolHistory},
 		{"tool non-stream", enabledConfig(), identityHeader(), `{"model":"gpt-5.6-sol","stream":false,"tools":[{"type":"function","name":"x"}]}`, ReasonToolNonStream},
-		{"image", enabledConfig(), identityHeader(), `{"model":"gpt-5.6-sol","input":[{"role":"user","content":[{"type":"input_image","image_url":"data:"}]}]}`, ReasonHasAttachment},
+		{"image support off", imageOffConfig(), identityHeader(), `{"model":"gpt-5.6-sol","input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}]}`, ReasonHasAttachment},
+		{"remote image", enabledConfig(), identityHeader(), `{"model":"gpt-5.6-sol","input":[{"role":"user","content":[{"type":"input_image","image_url":"https://x/y.png"}]}]}`, ReasonHasAttachment},
+		{"input file", enabledConfig(), identityHeader(), `{"model":"gpt-5.6-sol","input":[{"role":"user","content":[{"type":"input_file","file_id":"f"}]}]}`, ReasonHasAttachment},
 		{"no auth", enabledConfig(), http.Header{"Chatgpt-Account-Id": {"a"}}, `{"model":"gpt-5.6-sol"}`, ReasonNoAuthorization},
 		{"no account", enabledConfig(), http.Header{"Authorization": {"Bearer t"}}, `{"model":"gpt-5.6-sol"}`, ReasonNoAccountID},
 	}

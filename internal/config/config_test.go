@@ -29,6 +29,9 @@ func TestDefaultsKeepBasispointsOff(t *testing.T) {
 	if !cfg.ToolRelay || cfg.ToolCallTTLSeconds != 7*24*60*60 {
 		t.Fatalf("tool relay defaults wrong: %+v", cfg)
 	}
+	if !cfg.ImageSupport || cfg.MaxImageBytes != 10<<20 {
+		t.Fatalf("image defaults wrong: %+v", cfg)
+	}
 }
 
 func TestParseKeepsExplicitValues(t *testing.T) {
@@ -74,6 +77,8 @@ func TestParseRejectsInvalidInput(t *testing.T) {
 		"body limit too large":  `{"max_body_bytes":1073741824}`,
 		"ttl too small":         `{"tool_call_ttl_seconds":30}`,
 		"ttl too large":         `{"tool_call_ttl_seconds":9999999}`,
+		"image too small":       `{"max_image_bytes":100}`,
+		"image too large":       `{"max_image_bytes":134217728}`,
 	}
 	for name, raw := range cases {
 		if _, err := Parse([]byte(raw)); err == nil {
@@ -103,7 +108,7 @@ func TestJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(want.JSON(), &fields); err != nil {
 		t.Fatal(err)
 	}
-	if len(fields) != 14 {
+	if len(fields) != 16 {
 		t.Fatalf("normalized JSON must contain every field, got %d: %v", len(fields), fields)
 	}
 	if strings.Contains(string(want.JSON()), `<`) {
