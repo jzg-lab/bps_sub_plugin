@@ -100,7 +100,9 @@ user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 | 3 | 请求体是合法 JSON 对象，且不超过 `max_body_bytes` | `bad_body` / `body_too_large` |
 | 4 | 模型在白名单内（按路由模式处理后缀，见下） | `model_not_allowed` |
 | 5 | 没有 `tools`（或为空数组） | `has_tools` |
-| 6 | input 里没有图片（`input_image`、`image_url` 之类） | `has_image` |
+| 6 | 历史里没有工具调用/结果（`function_call*`、`custom_tool_call*`、`role:tool` 等） | `has_tool_history` |
+| 7 | input 里没有图片/文件/音频（`input_image`、`image_url`、`input_file`、`input_audio`） | `has_attachment` |
+| 8 | 请求头有 `Authorization` 和 `chatgpt-account-id` | `no_authorization` / `no_account_id` |
 
 **路由模式** `route_mode`：
 - `all`（默认）：白名单里的模型全部走 basispoints。
@@ -171,7 +173,7 @@ codex 透传不变。这会把 HTTP/2 处理复杂化，所以**先测再决定*
       Go 标准 `net/http` 请求 basispoints，确认返回 200 还是被 Cloudflare 403。
       结论决定是否需要 2.7。（令牌从测试库读取，用完删除，不落盘、不打印。）
 - [x] **S2 配置**：扩展 `internal/config`（2.5），补测试（默认值、校验、未知字段、白名单为空等）。
-- [ ] **S3 路由 + 改写**：新建 `internal/basispoints`（`route.go`、`rewrite.go`、`metadata.go`），
+- [x] **S3 路由 + 改写**：新建 `internal/basispoints`（`route.go`、`rewrite.go`、`metadata.go`），
       纯函数，全部单元测试覆盖：各原因码、后缀处理、instructions 移动、reasoning 过滤、
       item_reference 丢弃、effort 映射、metadata 确定性（同输入同输出、跨轮 task_id 不变）、头白名单。
 - [ ] **S4 传输接入**：`internal/transport/forward.go` 读全请求体 → 路由 → 发 bps 或 codex →
@@ -205,3 +207,11 @@ codex 透传不变。这会把 HTTP/2 处理复杂化，所以**先测再决定*
     S1 是服务器**直连**测的，没经过这个代理；S7 实测时 bps 请求会经代理出去，要确认代理出口也能过。
 - **2026-09-25 S2 ✅**：`internal/config` 增加 7 个字段（2.5），默认 `bps_enabled=false`。
   Config 里有切片，不能再用 `==` 比较，新增 `Clone()`/`Equal()`；`Pool` 存取配置都做深拷贝。
+- **2026-09-25 S3 ✅**：`internal/basispoints`（`route.go`、`rewrite.go`、`metadata.go`）+ 测试全部通过。
+  相对计划的调整：
+  - 新增原因码 `has_tool_history`：没带 `tools` 但历史里有工具调用的请求也走 codex（basispoints 不认识客户端工具历史），
+    图片原因码改名 `has_attachment`（也覆盖文件、音频）。2.1 的表格已同步。
+  - `all` 模式下带后缀的模型名也会去掉后缀再匹配，两种模式都能用 `-bps` 名字。
+  - 只认 `chatgpt.com` 主机的 `/backend-api/codex/responses`，防止误改其他主机的请求。
+  - uuid5 与 Python `uuid.uuid5(NAMESPACE_URL, ...)` 对过已知向量，结果一致。
+  - JSON 用 `UseNumber` 解析，避免客户端 metadata 里的大整数失真。
