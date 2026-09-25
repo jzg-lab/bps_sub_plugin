@@ -1,0 +1,5 @@
+/.venv/
+*.s2plugin
+/dist/
+*.key
+secrets/
