@@ -5,7 +5,7 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部的 **basis
 的降载路由。以 sub2api 官方插件机制（`openai.oauth.outbound_transport.v1`）交付，
 **不改 sub2api 源码**。
 
-> 状态：阶段 0、1、2 已完成（插件 0.2.1 在测试环境运行，纯对话已走 basispoints）。阶段 2 的计划与执行记录见 [STAGE2.md](STAGE2.md)。下一步阶段 3。本文随开发进度更新。
+> 状态：阶段 0、1、2 已完成（插件 0.2.1 在测试环境运行，纯对话已走 basispoints）。**阶段 3 进行中，执行计划见 [STAGE3.md](STAGE3.md)**。阶段 2 的计划与执行记录见 [STAGE2.md](STAGE2.md)。本文随开发进度更新。
 
 ---
 
