@@ -34,18 +34,18 @@ func NewPool(cfg config.Config) *Pool {
 	return &Pool{cfg: cfg, entries: make(map[string]*poolEntry)}
 }
 
-// Config 返回当前生效的配置。
+// Config 返回当前生效配置的副本。
 func (p *Pool) Config() config.Config {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.cfg
+	return p.cfg.Clone()
 }
 
 // Apply 切换配置。已在进行中的请求继续使用旧 Transport 直到完成。
 func (p *Pool) Apply(cfg config.Config) {
 	p.mu.Lock()
 	old := p.entries
-	p.cfg = cfg
+	p.cfg = cfg.Clone()
 	p.entries = make(map[string]*poolEntry)
 	p.mu.Unlock()
 	for _, entry := range old {
