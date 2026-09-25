@@ -5,7 +5,7 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部的 **basis
 的降载路由。以 sub2api 官方插件机制（`openai.oauth.outbound_transport.v1`）交付，
 **不改 sub2api 源码**。
 
-> 状态：计划阶段。本文是路线图，随开发进度更新。
+> 状态：阶段 0 已在本地准备好（等待强制推送）、阶段 1 已完成。本文随开发进度更新。
 
 ---
 
@@ -75,8 +75,8 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部的 **basis
 
 | 阶段 | 内容 | 产出 | 预估 |
 | --- | --- | --- | --- |
-| **0 清理** | 把 sub2api 的 main 恢复为纯官方 0.2.8；旧的 basispoints 开关移到 `archive/basispoints-toggle` 分支；测试环境关掉账号级开关 | sub2api 仓库干净 | 0.5 天 |
-| **1 骨架** | Go 实现 `TransportPlugin`（GetInfo/Health/Validate/Apply/Test/Forward）；先做「原样透传到 codex」；打包器 + 本地未签名安装跑通 | 能安装、能转发的空插件 | 1–2 天 |
+| **0 清理** ✅ 本地完成 | 把 sub2api 的 main 恢复为纯官方 0.2.8；旧的 basispoints 开关移到 `archive/basispoints-toggle` 分支；测试环境关掉账号级开关 | sub2api 仓库干净 | 0.5 天 |
+| **1 骨架** ✅ | Go 实现 `TransportPlugin`（GetInfo/Health/Validate/Apply/Test/Forward）；先做「原样透传到 codex」；打包器 + 本地未签名安装跑通 | 能安装、能转发的空插件 | 1–2 天 |
 | **2 basispoints 直转（无工具）** | 路由判定 + 请求头/体改写 + 模型/效率白名单 + 出站栈贴近浏览器（TLS 指纹、连接复用）；不支持工具的请求先屏蔽或降级回 codex | 纯对话可用 | 1–2 天 |
 | **3 工具中转** | catalog 注入 + SSE 实时还原 + 并行调用 + KV 多轮回放 + 图片旁路 | 带工具的 Codex 可用 | 3–5 天，需反复调 |
 | **4 配置页 + 验收** | UI Bridge 配置页（模型白名单、效率映射、工具开关、灰度）；单测 + 宿主集成测试；测试服灰度实测 | 可发布的签名包 | 1–2 天 |
@@ -86,12 +86,15 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部的 **basis
 ```
 bps_sub_plugin/
 ├── cmd/bps-plugin/main.go        # 仅调用 pluginv1.Serve
+├── internal/buildinfo/          # 插件 ID + 版本（GetInfo 与 manifest 共用）
 ├── internal/config/             # 配置解析/校验/默认值
+├── internal/plugin/             # TransportPlugin gRPC 服务
 ├── internal/transport/          # 路由判定 + 请求改写 + 上游连接
-├── internal/basispoints/        # 头/体改写、模型白名单、effort 映射
-├── internal/tools/              # 工具 catalog + SSE 还原 + KV 回放
+├── internal/basispoints/        # 头/体改写、模型白名单、effort 映射（阶段 2）
+├── internal/tools/              # 工具 catalog + SSE 还原 + KV 回放（阶段 3）
+├── internal/pluginapi/v1/       # sub2api 插件契约副本
 ├── ui/index.html                # 配置页（sandbox iframe + UI Bridge）
-├── tools/packager/              # 打包 + 计算 SHA-256 + 生成 manifest.json
+├── tools/packager/              # 打包 + 计算 SHA-256 + 生成 manifest.json + 签名
 ├── manifest.source.json
 ├── docs/PLAN.md                 # 本文
 └── README.md
@@ -108,10 +111,25 @@ bps_sub_plugin/
 - **依赖 sub2api 版本**：`requires.sub2api` 锁定 0.2.x；宿主升级要重测 `transport_api` 兼容性。
 - **密钥**：Ed25519 发布私钥只在本地/离线，绝不进仓库或服务器；`trusted_publishers` 只配公钥。
 
-## 7. 待办 / 需要你确认
+## 7. 决定记录
 
-- [ ] **阶段 0 需强制推送 sub2api main**（恢复纯官方）→ 由你在 Windows PowerShell 执行。
-- [ ] 是否接受"先灰度 10% 再放量"的上线节奏。
-- [ ] 发布签名：本项目自建 Ed25519 公私钥（部署时把公钥加到 `plugins.trusted_publishers`），
-      还是测试期先用 `allow_unsigned` 本地包。建议开发期用后者，发布期用前者。
-- [ ] Go module 路径命名（建议 `github.com/jzg-lab/bps_sub_plugin`）。
+- [x] 阶段 0：sub2api main 恢复为纯官方 0.2.8（仅保留 README 顶部 fork 说明），旧开关归档到
+      `archive/basispoints-toggle`。强制推送由你执行。（2026-09-25 确认）
+- [x] 签名：开发期用 `allow_unsigned` 未签名包；发布期用本项目自建 Ed25519 密钥
+      （`go run ./tools/packager keygen`），公钥加到 `plugins.trusted_publishers`。（2026-09-25 确认）
+- [x] Go module：`github.com/jzg-lab/bps_sub_plugin`；插件 ID：`io.github.jzg-lab.bps-sub-plugin`。
+- [ ] 上线节奏：建议先灰度 10% 再放量（阶段 4 前确认）。
+
+## 8. 阶段 1 实现备注
+
+- sub2api 的 Go module 在仓库 `backend/` 子目录，不能直接 `go get`，所以把契约文件
+  复制到 `internal/pluginapi/v1/`（见其中 `UPSTREAM.md`）。升级宿主时整体覆盖。
+- 透传语义：请求头原样转发（去掉 `Content-Length`/`Transfer-Encoding`/`Host`/`Connection`，
+  由 net/http 重新生成）；`Host` 用宿主给的值；不自动加 `Accept-Encoding`、不自动解压。
+- `request_sent`：用 `httptrace.WroteHeaders` 判定。请求头还没写出就失败（连不上、代理错误）
+  报 `false`，宿主可以换账号重试；其余情况一律 `true`。
+- 连接池按代理地址复用 `http.Transport`，最多 256 个，超出淘汰最久未用的；改配置时整体换新。
+- 已知差异：宿主原生路径对 codex 端点可能使用 TLS 指纹（uTLS），插件目前用 Go 标准 TLS。
+  阶段 2 需要评估 basispoints 是否对 TLS 指纹敏感（第 1 节"连接特征敏感"）。
+- 已验证：用 sub2api 0.2.8 自己的安装器、`startPluginRuntime`、`roundTrip` 跑通了
+  安装 → 启动 → 配置 → 转发 → 错误帧（在 sub2api 仓库里临时加测试，跑完删除）。

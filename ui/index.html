@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BPS Sub Plugin</title>
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>BPS Sub Plugin</h1>
+      <p class="muted">把 OpenAI OAuth 账号的请求改走 basispoints 端点。当前版本为<strong>原样透传</strong>骨架，请求仍发往原 codex 端点。</p>
+    </header>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>运行状态</h2>
+        <button type="button" id="refresh-status" class="secondary">刷新</button>
+      </div>
+      <dl id="status" class="status-grid">
+        <div><dt>状态</dt><dd id="st-health">—</dd></div>
+        <div><dt>版本</dt><dd id="st-version">—</dd></div>
+        <div><dt>模式</dt><dd id="st-mode">—</dd></div>
+        <div><dt>运行时长</dt><dd id="st-uptime">—</dd></div>
+        <div><dt>累计请求</dt><dd id="st-requests">—</dd></div>
+        <div><dt>进行中</dt><dd id="st-inflight">—</dd></div>
+        <div><dt>失败</dt><dd id="st-failed">—</dd></div>
+        <div><dt>宿主服务</dt><dd id="st-host">—</dd></div>
+      </dl>
+    </section>
+
+    <form id="config-form" class="card" novalidate>
+      <h2>连接设置</h2>
+      <label class="field">
+        <span>等待响应头超时（秒，0 = 不限制）</span>
+        <input type="number" name="response_header_timeout_seconds" min="0" max="3600" step="1" required>
+      </label>
+      <label class="field">
+        <span>空闲连接保留时间（秒）</span>
+        <input type="number" name="idle_conn_timeout_seconds" min="1" max="3600" step="1" required>
+      </label>
+      <label class="field">
+        <span>每个上游主机最大空闲连接数</span>
+        <input type="number" name="max_idle_conns_per_host" min="1" max="1024" step="1" required>
+      </label>
+      <label class="check">
+        <input type="checkbox" name="enable_http2">
+        <span>尝试使用 HTTP/2</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" name="use_account_proxy">
+        <span>使用账号配置的代理（关闭则直连）</span>
+      </label>
+
+      <div class="actions">
+        <button type="submit" id="save">保存</button>
+        <button type="button" id="test" class="secondary">测试已保存配置</button>
+      </div>
+      <p id="message" class="message" role="status" aria-live="polite"></p>
+    </form>
+  </main>
+  <script src="assets/bridge-v1.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,90 @@
+:root {
+  color-scheme: light dark;
+  --fg: #1f2328;
+  --muted: #656d76;
+  --bg: #ffffff;
+  --card: #f6f8fa;
+  --border: #d0d7de;
+  --accent: #0969da;
+  --ok: #1a7f37;
+  --err: #cf222e;
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e6edf3;
+    --muted: #8d96a0;
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --accent: #4493f8;
+    --ok: #3fb950;
+    --err: #f85149;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; color: var(--fg); background: var(--bg); }
+
+main { max-width: 720px; margin: 0 auto; padding: 16px; }
+
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 0 0 12px; }
+
+.muted { color: var(--muted); margin: 0 0 16px; line-height: 1.5; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.card-head { display: flex; justify-content: space-between; align-items: center; }
+.card-head h2 { margin: 0; }
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 12px 0 0;
+}
+.status-grid dt { color: var(--muted); font-size: 12px; }
+.status-grid dd { margin: 2px 0 0; font-weight: 600; word-break: break-word; }
+
+.field { display: block; margin-bottom: 12px; }
+.field span { display: block; margin-bottom: 4px; }
+.field input {
+  width: 100%;
+  max-width: 240px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.check { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+
+.actions { display: flex; gap: 8px; margin-top: 16px; }
+
+button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+button.secondary { background: transparent; color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+.message { min-height: 20px; margin: 12px 0 0; }
+.message.success { color: var(--ok); }
+.message.error { color: var(--err); }
