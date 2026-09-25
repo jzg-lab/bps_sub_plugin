@@ -26,6 +26,9 @@ func TestDefaultsKeepBasispointsOff(t *testing.T) {
 	if cfg.RouteMode != RouteModeAll || !cfg.FallbackToCodex || len(cfg.Models) != len(DefaultModels) {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
+	if !cfg.ToolRelay || cfg.ToolCallTTLSeconds != 7*24*60*60 {
+		t.Fatalf("tool relay defaults wrong: %+v", cfg)
+	}
 }
 
 func TestParseKeepsExplicitValues(t *testing.T) {
@@ -69,6 +72,8 @@ func TestParseRejectsInvalidInput(t *testing.T) {
 		"user agent newline":    `{"bps_user_agent":"a\nb"}`,
 		"body limit too small":  `{"max_body_bytes":1024}`,
 		"body limit too large":  `{"max_body_bytes":1073741824}`,
+		"ttl too small":         `{"tool_call_ttl_seconds":30}`,
+		"ttl too large":         `{"tool_call_ttl_seconds":9999999}`,
 	}
 	for name, raw := range cases {
 		if _, err := Parse([]byte(raw)); err == nil {
@@ -98,7 +103,7 @@ func TestJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(want.JSON(), &fields); err != nil {
 		t.Fatal(err)
 	}
-	if len(fields) != 12 {
+	if len(fields) != 14 {
 		t.Fatalf("normalized JSON must contain every field, got %d: %v", len(fields), fields)
 	}
 	if strings.Contains(string(want.JSON()), `<`) {

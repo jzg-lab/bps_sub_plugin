@@ -155,8 +155,8 @@ basispoints 不接受客户端声明的 `tools`（带了就 422）。做法（�
 
 ## 4. 执行清单
 
-- [ ] **T1 配置**：加 `tool_relay`、`tool_call_ttl_seconds`（含校验、测试）。
-- [ ] **T2 catalog + 工具解析**：`internal/basispoints/tools.go`：解析 tools（含 namespace）、
+- [x] **T1 配置**：加 `tool_relay`、`tool_call_ttl_seconds`（含校验、测试）。
+- [x] **T2 catalog + 工具解析**：`internal/basispoints/tools.go`：解析 tools（含 namespace）、
       生成 catalog/reminder developer 消息、内层 envelope 解码（含 JSON 反斜杠修复）、schema 校验、
       原生调用 → 客户端调用还原、fallback 重建、update_plan 双向转换。纯函数，全测试覆盖。
 - [ ] **T3 路由 + 请求体**：route.go 把"带工具/有工具历史"从 skip 改为进入中转；BuildBody 注入
@@ -180,3 +180,13 @@ basispoints 不接受客户端声明的 `tools`（带了就 422）。做法（�
 ## 5. 执行记录
 
 （每完成一步追加：日期、结论、遇到的问题。）
+
+## 5. 执行记录
+
+- **2026-09-25 探针**：用 catalog 提示词 + run_officejs 在测试账号 2 上实测：模型先发 commentary message，
+  再发 `function_call name=run_officejs`，`code` 里是字符串化的 `{"name":"exec_command","arguments":{"cmd":"pwd"}}`；
+  第二轮回放原生 function_call + function_call_output 后，模型正确读到工具结果。协议可行，照搬参考实现。
+- **2026-09-25 T1 ✅**：加 `tool_relay`（默认 true）、`tool_call_ttl_seconds`（默认 7 天，60 秒~90 天）。
+- **2026-09-25 T2 ✅**：`internal/basispoints/tools.go`（目录解析、catalog/reminder 生成）、`relay.go`
+  （原生调用 → 客户端调用还原、run_officejs 解包含双层嵌套、JSON 反斜杠修复、直呼工具名兼容）、
+  `schema.go`（轻量 JSON Schema 校验、update_plan 双向转换）。全测试通过。

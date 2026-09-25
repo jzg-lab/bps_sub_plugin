@@ -53,6 +53,12 @@ type Config struct {
 	BPSUserAgent string `json:"bps_user_agent"`
 	// MaxBodyBytes 是允许改写的最大请求体，超过就原样透传。
 	MaxBodyBytes int64 `json:"max_body_bytes"`
+
+	// ToolRelay 为 true 时，带工具的流式请求也改走 basispoints（工具中转，阶段 3）；
+	// 关闭时带工具的请求继续走 codex（阶段 2 行为）。仅在 BPSEnabled 时有意义。
+	ToolRelay bool `json:"tool_relay"`
+	// ToolCallTTLSeconds 是工具调用映射在 KV 里的存活时间（秒）。
+	ToolCallTTLSeconds int `json:"tool_call_ttl_seconds"`
 }
 
 // Default 返回默认配置。
@@ -71,6 +77,9 @@ func Default() Config {
 		FallbackToCodex: true,
 		BPSUserAgent:    DefaultBPSUserAgent,
 		MaxBodyBytes:    32 << 20,
+
+		ToolRelay:          true,
+		ToolCallTTLSeconds: 7 * 24 * 60 * 60,
 	}
 }
 
@@ -152,6 +161,9 @@ func (c Config) Validate() error {
 	}
 	if c.MaxBodyBytes < 1<<20 || c.MaxBodyBytes > 256<<20 {
 		return errors.New("max_body_bytes 必须在 1 MiB 到 256 MiB 之间")
+	}
+	if c.ToolCallTTLSeconds < 60 || c.ToolCallTTLSeconds > 90*24*60*60 {
+		return errors.New("tool_call_ttl_seconds 必须在 60 秒到 90 天之间")
 	}
 	return nil
 }
