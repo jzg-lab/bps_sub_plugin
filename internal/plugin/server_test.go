@@ -38,6 +38,25 @@ func TestHealthReportsStatusJSON(t *testing.T) {
 	if snapshot["mode"] != "passthrough" || snapshot["version"] != buildinfo.Version {
 		t.Fatalf("status_json = %v", snapshot)
 	}
+	for _, key := range []string{"routed_bps", "routed_codex", "skip_reasons", "fallbacks", "bps_status"} {
+		if _, ok := snapshot[key]; !ok {
+			t.Errorf("status_json missing %s", key)
+		}
+	}
+}
+
+func TestHealthModeFollowsConfig(t *testing.T) {
+	server := New()
+	applied, err := server.ApplyConfig(context.Background(), &pluginv1.ApplyConfigRequest{ConfigJson: []byte(`{"bps_enabled":true,"route_mode":"suffix"}`)})
+	if err != nil || !applied.Applied {
+		t.Fatalf("apply = %+v, %v", applied, err)
+	}
+	health, _ := server.Health(context.Background(), &pluginv1.HealthRequest{})
+	var snapshot map[string]any
+	_ = json.Unmarshal([]byte(health.StatusJson), &snapshot)
+	if snapshot["mode"] != "basispoints_suffix" {
+		t.Fatalf("mode = %v", snapshot["mode"])
+	}
 }
 
 func TestValidateConfigNormalizes(t *testing.T) {

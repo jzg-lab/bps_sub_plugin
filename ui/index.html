@@ -10,7 +10,8 @@
   <main>
     <header>
       <h1>BPS Sub Plugin</h1>
-      <p class="muted">把 OpenAI OAuth 账号的请求改走 basispoints 端点。当前版本为<strong>原样透传</strong>骨架，请求仍发往原 codex 端点。</p>
+      <p class="muted">把 OpenAI OAuth 账号的请求改走 basispoints 端点。只改写不带工具、不带图片、模型在白名单内的对话请求，其余请求照旧发往 codex。</p>
+      <p class="warn">⚠️ basispoints 是未公开的内部端点，使用可能违反 OpenAI 条款、导致账号封禁。建议先小比例灰度。</p>
     </header>
 
     <section class="card">
@@ -18,7 +19,7 @@
         <h2>运行状态</h2>
         <button type="button" id="refresh-status" class="secondary">刷新</button>
       </div>
-      <dl id="status" class="status-grid">
+      <dl class="status-grid">
         <div><dt>状态</dt><dd id="st-health">—</dd></div>
         <div><dt>版本</dt><dd id="st-version">—</dd></div>
         <div><dt>模式</dt><dd id="st-mode">—</dd></div>
@@ -27,36 +28,84 @@
         <div><dt>进行中</dt><dd id="st-inflight">—</dd></div>
         <div><dt>失败</dt><dd id="st-failed">—</dd></div>
         <div><dt>宿主提前结束</dt><dd id="st-cancelled">—</dd></div>
+        <div><dt>走 basispoints</dt><dd id="st-routed-bps">—</dd></div>
+        <div><dt>走 codex</dt><dd id="st-routed-codex">—</dd></div>
         <div><dt>宿主服务</dt><dd id="st-host">—</dd></div>
+      </dl>
+      <dl class="status-lists">
+        <div><dt>未改写原因</dt><dd id="st-skips">—</dd></div>
+        <div><dt>回落 codex 原因</dt><dd id="st-fallbacks">—</dd></div>
+        <div><dt>basispoints 状态码</dt><dd id="st-bps-status">—</dd></div>
       </dl>
     </section>
 
-    <form id="config-form" class="card" novalidate>
-      <h2>连接设置</h2>
-      <label class="field">
-        <span>等待响应头超时（秒，0 = 不限制）</span>
-        <input type="number" name="response_header_timeout_seconds" min="0" max="3600" step="1" required>
-      </label>
-      <label class="field">
-        <span>空闲连接保留时间（秒）</span>
-        <input type="number" name="idle_conn_timeout_seconds" min="1" max="3600" step="1" required>
-      </label>
-      <label class="field">
-        <span>每个上游主机最大空闲连接数</span>
-        <input type="number" name="max_idle_conns_per_host" min="1" max="1024" step="1" required>
-      </label>
-      <label class="check">
-        <input type="checkbox" name="enable_http2">
-        <span>尝试使用 HTTP/2</span>
-      </label>
-      <label class="check">
-        <input type="checkbox" name="use_account_proxy">
-        <span>使用账号配置的代理（关闭则直连）</span>
-      </label>
+    <form id="config-form" novalidate>
+      <section class="card">
+        <h2>basispoints</h2>
+        <label class="check">
+          <input type="checkbox" name="bps_enabled">
+          <span><strong>启用 basispoints 改写</strong>（关闭时所有请求原样透传）</span>
+        </label>
+        <fieldset class="field">
+          <legend>路由模式</legend>
+          <label class="check">
+            <input type="radio" name="route_mode" value="all">
+            <span>全部：白名单内的模型都走 basispoints</span>
+          </label>
+          <label class="check">
+            <input type="radio" name="route_mode" value="suffix">
+            <span>按后缀：只有模型名带后缀的请求走 basispoints（需要在账号模型映射里加上带后缀的名字）</span>
+          </label>
+        </fieldset>
+        <label class="field">
+          <span>模型后缀</span>
+          <input type="text" name="model_suffix" maxlength="32" spellcheck="false">
+        </label>
+        <label class="field">
+          <span>模型白名单（每行一个，发往上游的真实模型名）</span>
+          <textarea name="models" rows="5" spellcheck="false"></textarea>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="fallback_to_codex">
+          <span>basispoints 拒绝时回落 codex（模型无权限、请求体不兼容、被 Cloudflare 拦截、连接失败）</span>
+        </label>
+        <label class="field wide">
+          <span>basispoints User-Agent</span>
+          <input type="text" name="bps_user_agent" maxlength="512" spellcheck="false">
+        </label>
+        <label class="field">
+          <span>允许改写的最大请求体（字节）</span>
+          <input type="number" name="max_body_bytes" min="1048576" max="268435456" step="1" required>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>连接设置</h2>
+        <label class="field">
+          <span>等待响应头超时（秒，0 = 不限制）</span>
+          <input type="number" name="response_header_timeout_seconds" min="0" max="3600" step="1" required>
+        </label>
+        <label class="field">
+          <span>空闲连接保留时间（秒）</span>
+          <input type="number" name="idle_conn_timeout_seconds" min="1" max="3600" step="1" required>
+        </label>
+        <label class="field">
+          <span>每个上游主机最大空闲连接数</span>
+          <input type="number" name="max_idle_conns_per_host" min="1" max="1024" step="1" required>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="enable_http2">
+          <span>尝试使用 HTTP/2</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="use_account_proxy">
+          <span>使用账号配置的代理（关闭则直连）</span>
+        </label>
+      </section>
 
       <div class="actions">
         <button type="submit" id="save">保存</button>
-        <button type="button" id="test" class="secondary">测试已保存配置</button>
+        <button type="button" id="test" class="secondary">检查已保存配置</button>
       </div>
       <p id="message" class="message" role="status" aria-live="polite"></p>
     </form>

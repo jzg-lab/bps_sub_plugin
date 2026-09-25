@@ -4,6 +4,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"sync"
 	"time"
 
@@ -64,22 +65,38 @@ type status struct {
 	Cancelled     int64         `json:"cancelled"`
 	HostServices  bool          `json:"host_services"`
 	Config        config.Config `json:"config"`
+
+	RoutedBPS   int64            `json:"routed_bps"`
+	RoutedCodex int64            `json:"routed_codex"`
+	SkipReasons map[string]int64 `json:"skip_reasons"`
+	Fallbacks   map[string]int64 `json:"fallbacks"`
+	BPSStatus   map[string]int64 `json:"bps_status"`
 }
 
 func (s *Server) Health(context.Context, *pluginv1.HealthRequest) (*pluginv1.HealthResponse, error) {
 	s.mu.Lock()
 	hostReady := s.host != nil
 	s.mu.Unlock()
+	cfg := s.pool.Config()
+	mode := "passthrough"
+	if cfg.BPSEnabled {
+		mode = "basispoints_" + cfg.RouteMode
+	}
 	data, _ := json.Marshal(status{
 		Version:       buildinfo.Version,
-		Mode:          "passthrough",
+		Mode:          mode,
 		UptimeSeconds: int64(time.Since(s.startedAt).Seconds()),
 		Requests:      s.stats.Total.Load(),
 		InFlight:      s.stats.InFlight.Load(),
 		Failed:        s.stats.Failed.Load(),
 		Cancelled:     s.stats.Cancelled.Load(),
 		HostServices:  hostReady,
-		Config:        s.pool.Config(),
+		Config:        cfg,
+		RoutedBPS:     s.stats.RoutedBPS.Load(),
+		RoutedCodex:   s.stats.RoutedCodex.Load(),
+		SkipReasons:   s.stats.SkipReasons.Snapshot(),
+		Fallbacks:     s.stats.Fallbacks.Snapshot(),
+		BPSStatus:     s.stats.BPSStatus.Snapshot(),
 	})
 	return &pluginv1.HealthResponse{Healthy: true, Message: "ok", StatusJson: string(data)}, nil
 }
@@ -101,20 +118,26 @@ func (s *Server) ApplyConfig(_ context.Context, request *pluginv1.ApplyConfigReq
 	return &pluginv1.ApplyConfigResponse{Applied: true}, nil
 }
 
-// TestConfig 在阶段 1 只做配置校验；阶段 2 起会增加上游连通性探测。
+// TestConfig 只校验配置。连通性探测需要账号令牌，插件拿不到"当前账号"，
+// 所以请用宿主的账号测试或真实请求验证，结果看运行状态里的统计。
 func (s *Server) TestConfig(_ context.Context, request *pluginv1.TestConfigRequest) (*pluginv1.TestConfigResponse, error) {
 	started := time.Now()
 	raw := request.GetConfigJson()
 	if len(raw) == 0 {
 		raw = s.pool.Config().JSON()
 	}
-	if _, err := config.Parse(raw); err != nil {
+	cfg, err := config.Parse(raw)
+	if err != nil {
 		return &pluginv1.TestConfigResponse{Success: false, Message: err.Error()}, nil
+	}
+	message := "配置有效；basispoints 未启用，所有请求原样透传"
+	if cfg.BPSEnabled {
+		message = "配置有效；basispoints 已启用（" + cfg.RouteMode + " 模式，" + strconv.Itoa(len(cfg.Models)) + " 个模型）"
 	}
 	health, _ := s.Health(context.Background(), nil)
 	return &pluginv1.TestConfigResponse{
 		Success:    true,
-		Message:    "配置有效，当前为原样透传模式",
+		Message:    message,
 		LatencyMs:  time.Since(started).Milliseconds(),
 		StatusJson: health.StatusJson,
 	}, nil

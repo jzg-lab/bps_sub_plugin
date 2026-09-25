@@ -180,7 +180,7 @@ codex 透传不变。这会把 HTTP/2 处理复杂化，所以**先测再决定*
       按 2.3 回落。`request_sent` 语义：回落前的 bps 尝试不影响最终上报（以最终那次为准，
       但只要 bps 请求头已发出，最终上报 `request_sent=true`，防止宿主重放造成重复计费）。
       测试：用 httptest 模拟 bps 返回 200/403(两种)/422/401/429/500 和连接失败，验证回落与否。
-- [ ] **S5 状态 + 配置页**：Health 输出 2.6 的统计；UI 加开关、路由模式、白名单、回落开关和统计展示。
+- [x] **S5 状态 + 配置页**：Health 输出 2.6 的统计；UI 加开关、路由模式、白名单、回落开关和统计展示。
 - [x] ~~**S6 如需要（取决于 S1）**：uTLS。~~ 不需要（见 S1 记录）。
 - [ ] **S7 测试环境实测**：版本号改为 0.2.0，打包上传（停用 → 上传 → 启用），然后：
   1. `bps_enabled=false`：行为与 0.1.1 相同（回归）。
@@ -221,3 +221,9 @@ codex 透传不变。这会把 HTTP/2 处理复杂化，所以**先测再决定*
   - 回落判断只读错误响应体前 64 KiB；不回落时把读出的部分接回去，宿主收到完整原文（有测试）。
   - `request_sent` 规则：bps 连接失败但请求头已写出，回落后的最终失败也上报 `true`；bps 返回了 403/422 这类明确拒绝则视为未处理，按 codex 那次如实上报。
   - 测试手段：`Forwarder.roundTripper`（仅测试用）把 chatgpt.com 改发到本地服务器，`bpsURL` 变量指向本地假 basispoints。
+- **2026-09-25 S5 ✅**：`status_json` 增加 `routed_bps`/`routed_codex`/`skip_reasons`/`fallbacks`/`bps_status`，
+  `mode` 显示 `passthrough` / `basispoints_all` / `basispoints_suffix`。配置页新增 basispoints 区块和统计展示，
+  原因码有中文说明。用 sub2api 前端自带的 jsdom 跑过页面：读取、展示、改表单保存（12 个字段齐全）、
+  启用但白名单为空时拦截，都正常。
+  - 调整：`TestConfig` 仍然只做配置校验，不做连通性探测。原因：探测需要账号令牌，插件拿不到"当前账号"
+    （`ResolveOutboundIdentity` 要指定账号 ID，挑哪个账号、会不会消耗额度都说不清）。验证靠真实请求和统计。

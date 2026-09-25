@@ -88,3 +88,28 @@ button:disabled { opacity: 0.5; cursor: default; }
 .message { min-height: 20px; margin: 12px 0 0; }
 .message.success { color: var(--ok); }
 .message.error { color: var(--err); }
+
+.warn { color: var(--err); margin: 0 0 16px; line-height: 1.5; }
+
+fieldset.field { border: 0; padding: 0; margin: 0 0 12px; }
+fieldset.field legend { padding: 0; margin-bottom: 6px; }
+
+.field textarea,
+.field.wide input {
+  width: 100%;
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.field textarea { max-width: 360px; resize: vertical; }
+
+.status-lists { margin: 16px 0 0; }
+.status-lists div { margin-bottom: 8px; }
+.status-lists dt { color: var(--muted); font-size: 12px; }
+.status-lists dd { margin: 2px 0 0; word-break: break-word; }
+
+form > .actions { margin: 0 0 4px; }
