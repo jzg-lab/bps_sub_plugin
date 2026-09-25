@@ -8,6 +8,7 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -20,6 +21,7 @@ const (
 	codeTransportUnready = "BPS_TRANSPORT_UNAVAILABLE"
 	codeUpstreamFailed   = "BPS_UPSTREAM_REQUEST_FAILED"
 	codeUpstreamBody     = "BPS_UPSTREAM_BODY_FAILED"
+	codeRequestBody      = "BPS_REQUEST_BODY_FAILED"
 )
 
 const responseChunkSize = 32 * 1024
@@ -39,13 +41,60 @@ type Stats struct {
 	// Cancelled 统计宿主主动结束的流：宿主读到 response.completed 后会直接关闭流，
 	// 这是正常行为，不算失败。
 	Cancelled atomic.Int64
+
+	// RoutedBPS / RoutedCodex 是最终发往哪个上游的计数（回落算 codex）。
+	RoutedBPS   atomic.Int64
+	RoutedCodex atomic.Int64
+	// SkipReasons 是 Responses 请求没有改走 basispoints 的原因。
+	SkipReasons Counter
+	// Fallbacks 是 basispoints 失败后回落 codex 的原因。
+	Fallbacks Counter
+	// BPSStatus 是 basispoints 返回的 HTTP 状态码（连接失败记为 "error"）。
+	BPSStatus Counter
 }
 
-// Forwarder 把宿主的请求帧还原为 HTTP 请求发往上游，再把原始响应按帧回传。
-// 阶段 1 只做原样透传。
+// Counter 是按字符串键计数的并发安全映射。
+type Counter struct {
+	mu     sync.Mutex
+	values map[string]int64
+}
+
+// Add 给 key 加一。
+func (c *Counter) Add(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.values == nil {
+		c.values = make(map[string]int64)
+	}
+	c.values[key]++
+}
+
+// Get 返回 key 的当前计数。
+func (c *Counter) Get(key string) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.values[key]
+}
+
+// Snapshot 返回当前计数的副本。
+func (c *Counter) Snapshot() map[string]int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]int64, len(c.values))
+	for key, value := range c.values {
+		out[key] = value
+	}
+	return out
+}
+
+// Forwarder 把宿主的请求帧还原为 HTTP 请求，按配置改走 basispoints 或原样发往 codex，
+// 再把原始响应按帧回传。
 type Forwarder struct {
 	Pool  *Pool
 	Stats *Stats
+
+	// roundTripper 非空时替代连接池，仅供测试把 chatgpt.com 指向本地服务器。
+	roundTripper http.RoundTripper
 }
 
 // Forward 处理一次完整的转发流。协议错误通过 error 帧告知宿主，返回值只表示流本身出错。
@@ -86,40 +135,71 @@ func (f *Forwarder) forward(ctx context.Context, stream Stream) error {
 	}
 
 	bodyReader, bodyWriter := io.Pipe()
+	defer func() { _ = bodyReader.Close() }()
 	go pumpRequestBody(stream, bodyWriter)
-	if start.HasBody {
-		request.Body = bodyReader
-		request.ContentLength = start.ContentLength
-		// net/http 把 0 长度加非空 Body 同样视为长度未知，统一用 -1 走 chunked。
-		if request.ContentLength <= 0 {
-			request.ContentLength = -1
-		}
-	} else {
-		request.Body = http.NoBody
-		request.ContentLength = 0
+	if !start.HasBody {
 		// 仍需消费 body_end 帧，读端关闭后 pump 会丢弃后续数据。
 		_ = bodyReader.Close()
 	}
 
-	transport, err := f.Pool.Get(start.ProxyUrl)
-	if err != nil {
-		_ = bodyReader.Close()
-		return f.fail(stream, codeTransportUnready, err.Error(), false)
+	var transport http.RoundTripper = f.roundTripper
+	if transport == nil {
+		pooled, err := f.Pool.Get(start.ProxyUrl)
+		if err != nil {
+			return f.fail(stream, codeTransportUnready, err.Error(), false)
+		}
+		transport = pooled
+	}
+	cfg := f.Pool.Config()
+
+	if start.HasBody && cfg.BPSEnabled && isResponsesCandidate(request) {
+		return f.forwardResponses(ctx, stream, transport, cfg, request, bodyReader, start.ContentLength)
 	}
 
+	if start.HasBody {
+		setStreamingBody(request, bodyReader, start.ContentLength)
+	} else {
+		request.Body = http.NoBody
+		request.ContentLength = 0
+	}
+	f.Stats.RoutedCodex.Add(1)
+	return f.sendAndRelay(ctx, stream, transport, request, false)
+}
+
+// setStreamingBody 把请求体设为从宿主流式读取。
+func setStreamingBody(request *http.Request, body io.Reader, contentLength int64) {
+	request.Body = io.NopCloser(body)
+	request.ContentLength = contentLength
+	// net/http 把 0 长度加非空 Body 同样视为长度未知，统一用 -1 走 chunked。
+	if request.ContentLength <= 0 {
+		request.ContentLength = -1
+	}
+}
+
+// sendAndRelay 发出请求并把响应原样回传。priorSent 表示之前的尝试可能已被上游处理，
+// 失败时必须上报 request_sent=true 以阻止宿主重放。
+func (f *Forwarder) sendAndRelay(ctx context.Context, stream Stream, transport http.RoundTripper, request *http.Request, priorSent bool) error {
+	started := time.Now()
+	response, sent, err := roundTrip(ctx, transport, request)
+	if err != nil {
+		// 只有确认请求头从未写出时才允许宿主换账号重放。
+		return f.fail(stream, codeUpstreamFailed, err.Error(), sent || priorSent)
+	}
+	return f.relay(stream, response, started)
+}
+
+// roundTrip 发出请求，并报告请求头是否已经写出（写出后上游可能已开始处理）。
+func roundTrip(ctx context.Context, transport http.RoundTripper, request *http.Request) (*http.Response, bool, error) {
 	var headersWritten atomic.Bool
 	trace := &httptrace.ClientTrace{WroteHeaders: func() { headersWritten.Store(true) }}
 	request = request.WithContext(httptrace.WithClientTrace(ctx, trace))
-
-	started := time.Now()
 	response, err := transport.RoundTrip(request)
-	if err != nil {
-		_ = bodyReader.Close()
-		// 只有确认请求头从未写出时才允许宿主换账号重放。
-		return f.fail(stream, codeUpstreamFailed, err.Error(), headersWritten.Load())
-	}
-	defer func() { _ = response.Body.Close() }()
+	return response, headersWritten.Load(), err
+}
 
+// relay 把上游响应按帧回传宿主，并负责关闭响应体。
+func (f *Forwarder) relay(stream Stream, response *http.Response, started time.Time) error {
+	defer func() { _ = response.Body.Close() }()
 	if err := stream.Send(&pluginv1.ForwardResponse{Frame: &pluginv1.ForwardResponse_Start{Start: &pluginv1.ForwardResponseStart{
 		StatusCode:    int32(response.StatusCode),
 		Status:        response.Status,

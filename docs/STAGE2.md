@@ -176,7 +176,7 @@ codex 透传不变。这会把 HTTP/2 处理复杂化，所以**先测再决定*
 - [x] **S3 路由 + 改写**：新建 `internal/basispoints`（`route.go`、`rewrite.go`、`metadata.go`），
       纯函数，全部单元测试覆盖：各原因码、后缀处理、instructions 移动、reasoning 过滤、
       item_reference 丢弃、effort 映射、metadata 确定性（同输入同输出、跨轮 task_id 不变）、头白名单。
-- [ ] **S4 传输接入**：`internal/transport/forward.go` 读全请求体 → 路由 → 发 bps 或 codex →
+- [x] **S4 传输接入**：`internal/transport/forward.go` 读全请求体 → 路由 → 发 bps 或 codex →
       按 2.3 回落。`request_sent` 语义：回落前的 bps 尝试不影响最终上报（以最终那次为准，
       但只要 bps 请求头已发出，最终上报 `request_sent=true`，防止宿主重放造成重复计费）。
       测试：用 httptest 模拟 bps 返回 200/403(两种)/422/401/429/500 和连接失败，验证回落与否。
@@ -215,3 +215,9 @@ codex 透传不变。这会把 HTTP/2 处理复杂化，所以**先测再决定*
   - 只认 `chatgpt.com` 主机的 `/backend-api/codex/responses`，防止误改其他主机的请求。
   - uuid5 与 Python `uuid.uuid5(NAMESPACE_URL, ...)` 对过已知向量，结果一致。
   - JSON 用 `UseNumber` 解析，避免客户端 metadata 里的大整数失真。
+- **2026-09-25 S4 ✅**：`internal/transport/responses.go` 接入路由、改写、回落；测试（带 race）全部通过。
+  - 只有 `bps_enabled=true` 且是 chatgpt.com 的 `/backend-api/codex/responses` 才读全请求体；其他请求仍然流式透传，不额外占内存。
+  - 请求体超过 `max_body_bytes`：已读前缀和剩余部分拼起来，照旧流式发 codex（`body_too_large`）。
+  - 回落判断只读错误响应体前 64 KiB；不回落时把读出的部分接回去，宿主收到完整原文（有测试）。
+  - `request_sent` 规则：bps 连接失败但请求头已写出，回落后的最终失败也上报 `true`；bps 返回了 403/422 这类明确拒绝则视为未处理，按 codex 那次如实上报。
+  - 测试手段：`Forwarder.roundTripper`（仅测试用）把 chatgpt.com 改发到本地服务器，`bpsURL` 变量指向本地假 basispoints。
