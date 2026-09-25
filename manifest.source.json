@@ -1,6 +1,6 @@
 {
   "name": "BPS Sub Plugin",
-  "description": "把 OpenAI OAuth 账号的请求改走 OpenAI basispoints 端点（开发中，当前为原样透传骨架）",
+  "description": "把 OpenAI OAuth 账号的请求改走 OpenAI basispoints 端点（开发中：支持不带工具的对话请求）",
   "author": "jzg-lab",
   "requires": {
     "sub2api": ">=0.2.8 <0.3.0",

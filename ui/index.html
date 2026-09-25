@@ -54,7 +54,7 @@
           </label>
           <label class="check">
             <input type="radio" name="route_mode" value="suffix">
-            <span>按后缀：只有模型名带后缀的请求走 basispoints（需要在账号模型映射里加上带后缀的名字）</span>
+            <span>按后缀：只有模型名带后缀的请求走 basispoints。<strong>sub2api 0.2.8 下不可用</strong>：宿主会把 <code>gpt-5.6-sol-bps</code> 规范化成 <code>gpt-5.6-sol</code> 再交给插件，后缀到不了插件</span>
           </label>
         </fieldset>
         <label class="field">

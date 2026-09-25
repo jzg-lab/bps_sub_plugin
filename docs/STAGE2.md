@@ -1,5 +1,7 @@
 # 阶段 2 执行计划：basispoints 直转（不带工具）
 
+> **状态：阶段 2 已完成（插件 0.2.1）。**
+>
 > 这份文档是阶段 2 的**工作底稿**：先写计划，再按清单执行，每完成一步就勾选并记录结果。
 > 上下文被压缩后，从「执行清单」里第一个没勾的步骤继续即可。
 > 总体路线见 [PLAN.md](PLAN.md)。
@@ -182,7 +184,7 @@ codex 透传不变。这会把 HTTP/2 处理复杂化，所以**先测再决定*
       测试：用 httptest 模拟 bps 返回 200/403(两种)/422/401/429/500 和连接失败，验证回落与否。
 - [x] **S5 状态 + 配置页**：Health 输出 2.6 的统计；UI 加开关、路由模式、白名单、回落开关和统计展示。
 - [x] ~~**S6 如需要（取决于 S1）**：uTLS。~~ 不需要（见 S1 记录）。
-- [ ] **S7 测试环境实测**：版本号改为 0.2.0，打包上传（停用 → 上传 → 启用），然后：
+- [x] **S7 测试环境实测**：版本号改为 0.2.0，打包上传（停用 → 上传 → 启用），然后：
   1. `bps_enabled=false`：行为与 0.1.1 相同（回归）。
   2. 打开后：`/v1/responses`（流式、非流式）与 `/v1/chat/completions` 用 `gpt-5.6-sol` → 统计里
      `routed_bps` 增加，回复正常，sub2api 用量记录正常。
@@ -192,7 +194,7 @@ codex 透传不变。这会把 HTTP/2 处理复杂化，所以**先测再决定*
   6. 多轮对话（带上一轮 reasoning encrypted_content）→ 200。
   7. `suffix` 模式：试 `gpt-5.6-sol-bps`，记录宿主是否放行。
   8. 看宿主日志没有错误、插件统计里 `failed` 为 0。
-- [ ] **S8 收尾**：更新 README、PLAN.md（阶段 2 打勾 + 备注）、本文第 4 节；提交并推送。
+- [x] **S8 收尾**：更新 README、PLAN.md（阶段 2 打勾 + 备注）、本文第 4 节；提交并推送。
 
 ## 4. 执行记录
 
@@ -227,3 +229,30 @@ codex 透传不变。这会把 HTTP/2 处理复杂化，所以**先测再决定*
   启用但白名单为空时拦截，都正常。
   - 调整：`TestConfig` 仍然只做配置校验，不做连通性探测。原因：探测需要账号令牌，插件拿不到"当前账号"
     （`ResolveOutboundIdentity` 要指定账号 ID，挑哪个账号、会不会消耗额度都说不清）。验证靠真实请求和统计。
+- **2026-09-25 S7 ✅**（插件 0.2.0，测试环境，灰度 100%，请求经账号代理出去）：
+
+  | 检查 | 结果 |
+  |---|---|
+  | 1 未启用时回归 | 流式、非流式都 200 `pong`，全部走 codex |
+  | 2 启用后路由 | `/v1/responses` 流式、非流式，`/v1/chat/completions`（带 system）非流式，`gpt-6-astra` 流式 chat —— 全部 200 `pong`，`routed_bps` 逐次 +1，bps 状态码全是 200 |
+  | 2b 其它模型 | `gpt-5.6-terra`、`gpt-5.6-luna` 走 bps，200 |
+  | 3 `gpt-5.5` | 走 codex（`model_not_allowed`），200 |
+  | 4 带 `tools` | 走 codex（`has_tools`），模型正确发起 `get_weather` 调用 |
+  | 5 `effort=max` | 映射成 xhigh 后走 bps，200 |
+  | 6 多轮 | 第二轮答出第一轮的 `tangerine`，两轮都走 bps。**但** bps 第一轮没返回 reasoning 条目，所以 encrypted reasoning 回放这条路径没被真实触发（单测覆盖了） |
+  | 7 后缀模式 | **sub2api 0.2.8 下不可用**，见下 |
+  | 8 日志和统计 | 30 分钟内宿主没有 WARN/ERROR；插件 `failed=0`、`fallbacks={}`；宿主用量表对 bps 请求照常记录 token |
+
+  **后缀模式的结论**：没加映射时宿主直接 404（模型不在账号映射里）；通过后台接口给两个账号加上
+  `gpt-5.6-sol-bps` 映射后，宿主接受了请求，但交给插件的模型名已经被规范化成 `gpt-5.6-sol`
+  （`openai_model_alias.go` 对 `gpt-5.6-sol` 用的是 `strings.Contains` 匹配），插件看不到后缀，只能走 codex。
+  所以 **suffix 模式在 0.2.8 上用不了**。代码保留（以后宿主改了或换别的标记方式还能用），配置页已注明。
+  测试后已把两个账号的映射还原，令牌完好（access_token 长度不变）。
+
+  其他记录：
+  - 直接改数据库里的 `model_mapping` 不生效（宿主缓存了账号），要走后台接口 `PUT /admin/accounts/:id`。
+  - 账号的 `refresh_token` 为空（切换镜像前的备份里也没有），不是这次操作造成的；令牌过期后需要重新授权，和插件无关。
+  - 测试辅助脚本在服务器 `/opt/sub2api-bpstest/plugins/s7.sh`（login / upgrade / config / status / req / logs / usage）。
+  - 测试环境现在保持 `bps_enabled=true`、`route_mode=all`。
+- **2026-09-25 S8 ✅**：配置页注明后缀模式在 0.2.8 不可用，版本升到 0.2.1 并部署到测试环境（升级后配置保留，请求正常走 bps）；
+  README、PLAN.md 已更新。阶段 2 完成。
