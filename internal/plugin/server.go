@@ -42,6 +42,7 @@ func New() *Server {
 	store := tools.New(time.Duration(cfg.ToolCallTTLSeconds)*time.Second, func() { stats.KVErrors.Add(1) })
 	forwarder := &transport.Forwarder{Pool: pool, Stats: stats}
 	forwarder.SetToolStore(store)
+	forwarder.SetImageCache(256)
 	return &Server{
 		pool:      pool,
 		stats:     stats,
@@ -82,6 +83,11 @@ type status struct {
 	ToolRelayed      int64 `json:"tool_relayed"`
 	ToolDecodeFailed int64 `json:"tool_decode_failed"`
 	KVErrors         int64 `json:"kv_errors"`
+
+	ImagesUploaded    int64 `json:"images_uploaded"`
+	ImagesReused      int64 `json:"images_reused"`
+	ImagesOmitted     int64 `json:"images_omitted"`
+	ImageUploadErrors int64 `json:"image_upload_errors"`
 }
 
 func (s *Server) Health(context.Context, *pluginv1.HealthRequest) (*pluginv1.HealthResponse, error) {
@@ -94,23 +100,27 @@ func (s *Server) Health(context.Context, *pluginv1.HealthRequest) (*pluginv1.Hea
 		mode = "basispoints_" + cfg.RouteMode
 	}
 	data, _ := json.Marshal(status{
-		Version:          buildinfo.Version,
-		Mode:             mode,
-		UptimeSeconds:    int64(time.Since(s.startedAt).Seconds()),
-		Requests:         s.stats.Total.Load(),
-		InFlight:         s.stats.InFlight.Load(),
-		Failed:           s.stats.Failed.Load(),
-		Cancelled:        s.stats.Cancelled.Load(),
-		HostServices:     hostReady,
-		Config:           cfg,
-		RoutedBPS:        s.stats.RoutedBPS.Load(),
-		RoutedCodex:      s.stats.RoutedCodex.Load(),
-		SkipReasons:      s.stats.SkipReasons.Snapshot(),
-		Fallbacks:        s.stats.Fallbacks.Snapshot(),
-		BPSStatus:        s.stats.BPSStatus.Snapshot(),
-		ToolRelayed:      s.stats.ToolRelayed.Load(),
-		ToolDecodeFailed: s.stats.ToolDecodeFailed.Load(),
-		KVErrors:         s.stats.KVErrors.Load(),
+		Version:           buildinfo.Version,
+		Mode:              mode,
+		UptimeSeconds:     int64(time.Since(s.startedAt).Seconds()),
+		Requests:          s.stats.Total.Load(),
+		InFlight:          s.stats.InFlight.Load(),
+		Failed:            s.stats.Failed.Load(),
+		Cancelled:         s.stats.Cancelled.Load(),
+		HostServices:      hostReady,
+		Config:            cfg,
+		RoutedBPS:         s.stats.RoutedBPS.Load(),
+		RoutedCodex:       s.stats.RoutedCodex.Load(),
+		SkipReasons:       s.stats.SkipReasons.Snapshot(),
+		Fallbacks:         s.stats.Fallbacks.Snapshot(),
+		BPSStatus:         s.stats.BPSStatus.Snapshot(),
+		ToolRelayed:       s.stats.ToolRelayed.Load(),
+		ToolDecodeFailed:  s.stats.ToolDecodeFailed.Load(),
+		KVErrors:          s.stats.KVErrors.Load(),
+		ImagesUploaded:    s.stats.ImagesUploaded.Load(),
+		ImagesReused:      s.stats.ImagesReused.Load(),
+		ImagesOmitted:     s.stats.ImagesOmitted.Load(),
+		ImageUploadErrors: s.stats.ImageUploadErrors.Load(),
 	})
 	return &pluginv1.HealthResponse{Healthy: true, Message: "ok", StatusJson: string(data)}, nil
 }

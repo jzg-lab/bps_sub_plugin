@@ -22,6 +22,7 @@ const (
 	fallbackInvalidBody = "invalid_body_422"
 	fallbackConnect     = "connect_error"
 	fallbackRewrite     = "rewrite_error"
+	fallbackImageUpload = "image_upload_failed"
 )
 
 // errorPeekLimit 是为判断是否回落而读取的错误响应体上限。
@@ -53,6 +54,14 @@ func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transpo
 	if !decision.Route {
 		f.Stats.SkipReasons.Add(decision.Reason)
 		return f.sendCodex(ctx, stream, transport, request, buffered, false)
+	}
+
+	if decision.HasImages {
+		if allFailed := f.uploadImages(ctx, transport, request.Header, cfg, decision.Body); allFailed && cfg.FallbackToCodex {
+			// 全部图片都传不上去：带图片走原生 codex 更稳。
+			f.Stats.Fallbacks.Add(fallbackImageUpload)
+			return f.sendCodex(ctx, stream, transport, request, buffered, false)
+		}
 	}
 
 	bpsBody, err := basispoints.BuildBody(decision, f.replayer)

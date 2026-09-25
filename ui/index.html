@@ -31,6 +31,7 @@
         <div><dt>走 basispoints</dt><dd id="st-routed-bps">—</dd></div>
         <div><dt>走 codex</dt><dd id="st-routed-codex">—</dd></div>
         <div><dt>工具中转次数</dt><dd id="st-tool-relayed">—</dd></div>
+        <div><dt>图片上传</dt><dd id="st-images-uploaded">—</dd></div>
         <div><dt>宿主服务</dt><dd id="st-host">—</dd></div>
       </dl>
       <dl class="status-lists">
@@ -77,6 +78,14 @@
         <label class="field">
           <span>工具调用映射存活时间（秒）</span>
           <input type="number" name="tool_call_ttl_seconds" min="60" max="7776000" step="1" required>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="image_support">
+          <span><strong>图片支持</strong>：带图片的请求把图片上传到 basispoints 后也走 basispoints（关闭则走 codex）</span>
+        </label>
+        <label class="field">
+          <span>单张图片大小上限（字节，超过降级为文本）</span>
+          <input type="number" name="max_image_bytes" min="1024" max="67108864" step="1" required>
         </label>
         <label class="field wide">
           <span>basispoints User-Agent</span>

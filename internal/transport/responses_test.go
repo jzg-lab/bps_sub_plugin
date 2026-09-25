@@ -34,12 +34,12 @@ func (r redirectTransport) RoundTrip(request *http.Request) (*http.Response, err
 }
 
 type upstreams struct {
-	codex, bps           *httptest.Server
-	codexHits, bpsHits   atomic.Int64
-	lastBPSBody          atomic.Value
-	lastBPSHeader        atomic.Value
-	lastCodexBody        atomic.Value
-	lastCodexHeaderValue atomic.Value
+	codex, bps                     *httptest.Server
+	codexHits, bpsHits, attachHits atomic.Int64
+	lastBPSBody                    atomic.Value
+	lastBPSHeader                  atomic.Value
+	lastCodexBody                  atomic.Value
+	lastCodexHeaderValue           atomic.Value
 }
 
 // newUpstreams 启动假的 codex 和 basispoints 服务器；bps 为 nil 时 basispoints 返回 200 SSE。
@@ -61,6 +61,12 @@ func newUpstreams(t *testing.T, bps http.HandlerFunc) *upstreams {
 		}
 	}
 	u.bps = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/attachments") {
+			u.attachHits.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"filename":"x","openai_file_id":"file-UP","size":3}`))
+			return
+		}
 		u.bpsHits.Add(1)
 		body, _ := io.ReadAll(r.Body)
 		u.lastBPSBody.Store(string(body))

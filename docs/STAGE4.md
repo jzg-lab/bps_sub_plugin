@@ -103,11 +103,11 @@
 - [x] **I1 配置**：加 `image_support`、`max_image_bytes`（校验、测试）。
 - [x] **I2 图片纯函数**：`internal/basispoints/images.go`：FindImages、ReplaceImages、DecodeDataURL、
       扩展名映射；route.go 区分图片与其它附件、加 `HasImages`、`image_support` 开关。全测试覆盖。
-- [ ] **I3 上传器 + 缓存**：`internal/transport/attachments.go`：上传 multipart 请求、进程内 LRU 缓存、
+- [x] **I3 上传器 + 缓存**：`internal/transport/attachments.go`：上传 multipart 请求、进程内 LRU 缓存、
       按 media_type 命名。用 httptest 假 attachments 服务器测（成功、4xx、连接失败、缓存命中）。
-- [ ] **I4 接线**：`forwardResponses` 里图片请求先上传再改写，接失败降级/回落逻辑，统计接入。
+- [x] **I4 接线**：`forwardResponses` 里图片请求先上传再改写，接失败降级/回落逻辑，统计接入。
       测试：图片请求上传后走 bps、上传失败降级、全失败回落 codex。
-- [ ] **I5 状态 + 配置页**：Health 加图片统计；配置页加 `image_support` 开关、`max_image_bytes`、图片统计展示。
+- [x] **I5 状态 + 配置页**：Health 加图片统计；配置页加 `image_support` 开关、`max_image_bytes`、图片统计展示。
 - [ ] **I6 测试环境实测**：版本 0.4.0，打包上传。测：
   1. `image_support=false`：带图片走 codex（回归阶段 3）。
   2. 打开后：带一张小图的请求 → 图片上传、body 改写、走 bps；额度允许时拿到视觉回复，
@@ -126,3 +126,10 @@
 - **2026-09-25 I2 ✅**：`internal/basispoints/images.go`（FindImages 去重、ReplaceImages 不改原 body、
   DecodeDataURL、ImageFileName）；route.go 用 classifyAttachments 区分内联图片和其它附件，
   只有内联图片且 image_support 开时才路由，远程图片/文件/音频仍走 codex。全测试通过。
+- **2026-09-25 I3 ✅**：`internal/transport/attachments.go` multipart 上传器（连接失败标记 uploadUnavailable）
+  + 进程内 LRU 缓存。测试覆盖成功/HTTP 错误/连接失败/无 file_id/缓存淘汰/URL 派生。
+- **2026-09-25 I4 ✅**：forwardResponses 里图片请求先上传（超限降级、缓存命中、连接失败后续跳过），
+  ReplaceImages 就地改 body，全失败且 fallback 开则回落 codex。测试：上传后走 bps 且无 data URL 外泄、
+  缓存避免重传、全失败回落、image_support 关走 codex。
+- **2026-09-25 I5 ✅**：状态加 images_uploaded/reused/omitted/image_upload_errors；配置页加图片开关、
+  上限、图片统计展示。jsdom 验证 16 字段齐全。

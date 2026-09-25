@@ -58,6 +58,11 @@ type Stats struct {
 	ToolFallbackRebuilt atomic.Int64 // KV 没命中、fallback 重建的次数
 	ToolDecodeFailed    atomic.Int64 // run_officejs 内层 JSON 解不出
 	KVErrors            atomic.Int64 // KV 读写出错
+
+	ImagesUploaded    atomic.Int64 // 成功上传的图片数
+	ImagesReused      atomic.Int64 // 命中上传缓存的图片数
+	ImagesOmitted     atomic.Int64 // 上传失败降级为文本的图片数
+	ImageUploadErrors atomic.Int64 // 图片上传出错次数
 }
 
 // Counter 是按字符串键计数的并发安全映射。
@@ -104,6 +109,8 @@ type Forwarder struct {
 	replayer basispoints.Replayer
 	// ToolStore 记住这一轮还原出来的原生调用，供下一轮回放（可空）。
 	toolStore ToolStore
+	// imageCache 缓存图片上传结果（可空）。
+	imageCache *imageCache
 
 	// roundTripper 非空时替代连接池，仅供测试把 chatgpt.com 指向本地服务器。
 	roundTripper http.RoundTripper
@@ -113,6 +120,13 @@ type Forwarder struct {
 type ToolStore interface {
 	basispoints.Replayer
 	RememberNativeCall(callID string, native map[string]any)
+}
+
+// SetImageCache 注入图片上传缓存。传 nil 关闭缓存（每次都重新上传）。
+func (f *Forwarder) SetImageCache(size int) {
+	if size > 0 {
+		f.imageCache = newImageCache(size)
+	}
 }
 
 // SetToolStore 注入工具调用存储（同时用作回放器）。传 nil 关闭工具回放持久化。
