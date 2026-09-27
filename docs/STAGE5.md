@@ -147,3 +147,42 @@
     模型读到工具结果给出最终答案。12432、12609 对任何请求（含 pong）都 403 usage policy，是账号级封禁。
 - **2026-09-27 N3 ✅**：0.5.2 签名包 sha256 `21d36f48…`，放在 `release/0.5.2/`；测试环境签名包升级 → healthy。
 - **2026-09-27 N4 ✅**：README、本文；提交推送。由用户上传生产（停用 → 上传 → 启用，配置保留）。
+
+## 7. 0.5.3：免费号被封 + update_plan 格式
+
+### 7.1 事实（2026-09-27 实测）
+
+- 客户反馈"又不干活"发生在 21:16 之前（0.5.2 或更早都在跑）。
+- **免费号被封**：今天 40 个账号收到 `403 This request was blocked by our usage policy`（约 100 次，19~21 点），
+  **全是 free 套餐**；14 个已被宿主标 error。business（`self_serve_business_prolite`）号 12783/12789/12536 一直正常。
+  封禁是账号级（被封号发最简单的 pong 也 403），但被封号走 codex 仍正常（12596/12432 codex luna 200）。
+  插件目前对这个 403 不回落 → 客户请求失败，宿主连续 3 次 403 就把账号停掉。
+- 套餐类型：宿主给插件的账号信息去掉了 credentials，拿不到 plan_type；但请求头里的 access token（JWT）
+  payload 的 `https://api.openai.com/auth.chatgpt_plan_type` 就是套餐（6 个账号实测与库里一致，库里空的 12432 JWT 里是 free）。
+- **update_plan**：原生工具模式下，basispoints 模型会调用它自带的 `update_plan`，参数是
+  `{"summary":…,"plan":[{"id","description","status","result"}]}`；Codex 要 `{"explanation":…,"plan":[{"step","status"}]}`，
+  直接报 `unknown field summary`（把真实 basispoints 返回喂给 Codex CLI 复现），计划不显示、浪费一轮。
+
+### 7.2 设计
+
+- **按套餐跳过**：配置 `exclude_plan_types`（默认 `["free"]`）。Decide 从 Authorization 的 JWT 读套餐，
+  命中 → 原因码 `plan_excluded`，原样走 codex。读不出套餐（非 JWT、没有该字段）不拦。
+- **usage policy 403 回落 + 冷却**：basispoints 返回 403 且正文含 `blocked by our usage policy` →
+  回落 codex（原因码 `usage_policy`，受 `fallback_to_codex` 控制），并把这个 chatgpt 账号记进内存冷却表 24 小时，
+  期间该账号直接走 codex（原因码 `policy_cooldown`）。重启插件清空。状态显示冷却中的账号数。
+- **update_plan 双向转换**（仅原生工具模式）：
+  - 响应：SSE 里 `name=update_plan` 的 function_call，扣住它的 arguments.delta，在 arguments.done 时
+    发一条转换后的 delta + done；output_item.done、response.completed 里的参数一并改写。其余事件原样透传。
+  - 历史：Codex 回放的 update_plan 调用转回原生参数、结果换成 `{"status":"ok"}`（沿用中转模式的已有逻辑）。
+
+### 7.3 执行清单
+
+- [ ] **U1 套餐跳过**：JWT 解析 + config + Decide + 配置页；单测。
+- [ ] **U2 usage policy 回落 + 冷却**：fallbackReason、冷却表、状态；单测。
+- [ ] **U3 update_plan 转换**：响应 SSE 改写 + 历史回放；单测；真实 basispoints 返回喂 Codex CLI 验证计划正常显示；
+      真实 basispoints 验证回放后的第二轮 200。
+- [ ] **U4 打包收尾**：0.5.3 签名包放 `release/0.5.3/`、测试环境装一遍；README/本文；提交推送。
+
+### 7.4 执行记录
+
+- **2026-09-27 调研**：见 7.1。
