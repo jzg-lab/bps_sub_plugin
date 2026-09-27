@@ -13,24 +13,23 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部 **basispoi
 
 ## 状态
 
-**0.5.0 已上线生产**（默认不改写，按账号白名单开启）。阶段 4 起的能力：在配置页打开「启用 basispoints 改写」后，满足条件的请求改走 basispoints，
-其余照旧发往 codex：
+**当前版本 0.6.3，已上线生产**（默认不改写，按账号白名单开启）。核心能力在配置页打开「启用 basispoints 改写」后生效：满足条件的请求改走 basispoints，其余照旧发往 codex：
 
-- 模型在白名单内（默认 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-6-astra`）；不带图片或文件。
-- **图片也支持**：user 消息里的内联图片先上传到 basispoints 附件端点，再用返回的 file_id 引用（带缓存、失败降级）。带远程 URL 图片、文件、音频的请求仍走 codex。
-- **带工具的请求也支持**（工具中转，默认开）：basispoints 不收客户端工具，插件把工具写进提示词目录，
-  模型经 `run_officejs` 发起调用，插件在 SSE 流里实时还原成 Codex 声明的 `function_call`/`custom_tool_call`，
-  多轮之间用宿主 KV 回放工具调用与结果。function、custom（apply_patch）、update_plan、并行调用都支持。
-  内层 envelope 兼容 `{input}` 形态（Codex Desktop/VSCode 把 apply_patch 声明成 function）、未转义引号修复；
-  还原不了的调用原样交给客户端并在下一轮给出重试引导。原生模式下模型误调 basispoints 自带的 Excel/技能工具时，
-  其结果被换成「改用 functions 工具」的引导。
+- 模型在白名单内（默认 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-6-astra`）。
+- 账号套餐不在 `exclude_plan_types`（默认排除 `free`；免费号走 basispoints 会被封）。套餐从 access token 的 JWT 读。
+- **图片支持**：user 消息里的内联图片先上传到 basispoints 附件端点，再用返回的 file_id 引用（带缓存、失败降级）。带远程 URL 图片、文件、音频的请求仍走 codex。
+- **两种工具形态都支持**：
+  - 新版 Codex（约 0.146 起）把工具放在 `input` 的 `additional_tools` 里，basispoints 直接认识——原样透传，不做中转（`native_tools`）。原生模式下模型误调 basispoints 自带的 Excel/技能工具时，其结果被换成「改用 functions 工具」的引导。
+  - 旧版 Codex 发顶层 `tools`——走工具中转：把工具写进提示词目录，模型经 `run_officejs` 调用，插件在 SSE 流里实时还原成 `function_call`/`custom_tool_call`，多轮之间用宿主 KV 回放。function、custom（apply_patch）、update_plan、并行调用都支持；内层 envelope 兼容 `{input}` 形态、未转义引号修复；还原不了的调用原样交给客户端并在下一轮给出重试引导。
+  - `update_plan` 在两种形态下都会做参数格式双向转换（basispoints 原生 ↔ Codex）。
 
-basispoints 拒绝请求（模型无权限、请求体不兼容、被 Cloudflare 拦截、连不上）时自动回落 codex。
-配置页能看到路由、回落、工具中转的计数。默认**不启用 basispoints**，升级插件不会改变现有行为。
+basispoints 拒绝请求（模型无权限、请求体不兼容、被 Cloudflare 拦截、连不上、usage policy 封号）时自动回落 codex；被 usage policy 封的账号 24 小时内直接走 codex。配置页能看到路由、回落、工具、每轮结局的计数。默认**不启用 basispoints**，升级插件不会改变现有行为。
+
+**排查日志**（默认开，见下）：每个请求记一行结局，异常轮次和用户催促（"继续/？？？"）时保存对话原文，只留 1 天。
 
 已知限制：推理强度最高 `xhigh`（`max` 降为 `xhigh`）；文件/音频、远程 URL 图片走 codex；
-「按后缀」路由模式在 sub2api 0.2.8 上不可用。
-进度见 [docs/PLAN.md](docs/PLAN.md)；阶段 2/3 细节见 [docs/STAGE2.md](docs/STAGE2.md)、[docs/STAGE3.md](docs/STAGE3.md)。
+`tool_choice`/`parallel_tool_calls` basispoints 一律拒绝（422），插件不发；「按后缀」路由模式在 sub2api 0.2.8 上不可用。
+完整进度和各版本改动见 [docs/PLAN.md](docs/PLAN.md) 与 [docs/STAGE5.md](docs/STAGE5.md)。
 
 ## 在生产上使用（0.5.0 起）
 
