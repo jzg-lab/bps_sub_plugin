@@ -59,6 +59,9 @@ type Decision struct {
 	// NativeTools 表示工具声明在 input 的 additional_tools 里（新版 Codex）。basispoints
 	// 直接认识这种声明，工具调用和历史都原样透传，不走 run_officejs 中转。
 	NativeTools bool
+	// NativeToolNames 是 additional_tools 里声明的工具名（含 namespace 展开的 "ns.name" 和裸名）。
+	// 用来识别模型误调的 basispoints 自带工具（Excel、技能等），只在 NativeTools 时有值。
+	NativeToolNames map[string]bool
 	// HasImages 表示 input 里有可上传的内联图片。
 	HasImages bool
 }
@@ -126,9 +129,47 @@ func Decide(cfg config.Config, header http.Header, body []byte) Decision {
 	}
 	if nativeTools {
 		// 原生工具：响应里的调用就是客户端声明的工具，不需要 SSE 还原。
-		return Decision{Route: true, Model: model, Body: parsed, Catalog: catalog, Stream: stream, NativeTools: true, HasImages: images}
+		return Decision{Route: true, Model: model, Body: parsed, Catalog: catalog, Stream: stream, NativeTools: true, NativeToolNames: additionalToolNames(parsed["input"]), HasImages: images}
 	}
 	return Decision{Route: true, Model: model, Body: parsed, Catalog: catalog, Stream: stream, HasToolContext: hasToolContext, HasImages: images}
+}
+
+// additionalToolNames 收集 additional_tools 里声明的工具名（含 namespace 展开）。
+func additionalToolNames(input any) map[string]bool {
+	names := map[string]bool{}
+	items, ok := input.([]any)
+	if !ok {
+		return names
+	}
+	var collect func(any, string)
+	collect = func(raw any, namespace string) {
+		list, _ := raw.([]any)
+		for _, entry := range list {
+			tool, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			kind, _ := tool["type"].(string)
+			name, _ := tool["name"].(string)
+			if kind == "namespace" {
+				collect(tool["tools"], name)
+				continue
+			}
+			if name == "" {
+				name = kind
+			}
+			names[name] = true
+			if namespace != "" {
+				names[namespace+"."+name] = true
+			}
+		}
+	}
+	for _, raw := range items {
+		if item, ok := raw.(map[string]any); ok && item["type"] == "additional_tools" {
+			collect(item["tools"], "")
+		}
+	}
+	return names
 }
 
 // hasAdditionalTools 判断 input 里有没有 additional_tools 工具声明（新版 Codex 不再发顶层 tools）。

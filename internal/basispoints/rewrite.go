@@ -74,7 +74,7 @@ func BuildBody(decision Decision, replayer Replayer) ([]byte, error) {
 		catalog = &ToolCatalog{}
 	}
 	parallel := source["parallel_tool_calls"] != false
-	history := translateInput(rawInput, catalog, replayer, decision.NativeTools)
+	history := translateInput(rawInput, catalog, replayer, decision.NativeTools, decision.NativeToolNames)
 
 	input := make([]any, 0, len(history)+3)
 	if instructions, ok := source["instructions"].(string); ok && strings.TrimSpace(instructions) != "" {
@@ -161,7 +161,7 @@ func messageItem(role, text string) map[string]any {
 //   - 丢掉 item_reference（store=false 时上游无从解析）；
 //   - 工具调用/结果回放成上游认识的形态（catalog 非空时）；native 为 true（additional_tools）时
 //     调用本来就是上游发出的原生调用，原样保留。
-func translateInput(raw any, catalog *ToolCatalog, replayer Replayer, native bool) []any {
+func translateInput(raw any, catalog *ToolCatalog, replayer Replayer, native bool, nativeNames map[string]bool) []any {
 	if text, ok := raw.(string); ok {
 		return []any{messageItem("user", text)}
 	}
@@ -171,6 +171,9 @@ func translateInput(raw any, catalog *ToolCatalog, replayer Replayer, native boo
 	}
 	// callOrigins 记录 call_id → 回放后上游看到的工具名，供工具结果归一化用。
 	callOrigins := map[string]string{}
+	// unavailable 记录被 Codex 判为 unsupported 的调用里，哪些是 basispoints 自带工具（Codex 没声明）。
+	// 它们的结果要换成"用 functions 工具"的引导，否则模型会反复试探这些不存在的工具。
+	unavailable := map[string]bool{}
 	result := make([]any, 0, len(items))
 	for _, rawItem := range items {
 		item, ok := rawItem.(map[string]any)
@@ -199,11 +202,20 @@ func translateInput(raw any, catalog *ToolCatalog, replayer Replayer, native boo
 		case "function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output":
 			if native {
 				// 原生调用原样回放；只有 update_plan 被插件改过格式，要转回 basispoints 的原生格式。
-				if kind == "function_call" && stringField(item, "name") == "update_plan" {
+				switch {
+				case kind == "function_call" && stringField(item, "name") == "update_plan":
 					result = append(result, replayToolCall(item, catalog, replayer, callOrigins))
-				} else if kind == "function_call_output" && callOrigins[stringField(item, "call_id")] == "update_plan" {
+				case kind == "function_call" && isBasispointsOwnTool(stringField(item, "name"), nativeNames):
+					// 模型调了 basispoints 自带工具（Excel、技能等），Codex 没有它，会回 unsupported。
+					if callID := stringField(item, "call_id"); callID != "" {
+						unavailable[callID] = true
+					}
+					result = append(result, item)
+				case kind == "function_call_output" && unavailable[stringField(item, "call_id")]:
+					result = append(result, unavailableToolOutput(item))
+				case kind == "function_call_output" && callOrigins[stringField(item, "call_id")] == "update_plan":
 					result = append(result, normalizedToolOutput(item, callOrigins))
-				} else {
+				default:
 					result = append(result, item)
 				}
 			} else if kind == "function_call" || kind == "custom_tool_call" {
@@ -225,6 +237,14 @@ func translateInput(raw any, catalog *ToolCatalog, replayer Replayer, native boo
 func replayToolCall(item map[string]any, catalog *ToolCatalog, replayer Replayer, origins map[string]string) map[string]any {
 	callID := stringField(item, "call_id")
 	name := stringField(item, "name")
+
+	if isTransportName(name) {
+		// 上一轮插件没能还原、原样交给了客户端的中转调用：原样回放，结果换成重试指引。
+		if callID != "" {
+			origins[callID] = transportName
+		}
+		return cloneItem(item)
+	}
 
 	if name == "update_plan" {
 		if callID != "" {
@@ -306,6 +326,9 @@ func normalizedToolOutput(item map[string]any, origins map[string]string) map[st
 	if origin == transportName && callID != "" && result["type"] == "custom_tool_call_output" {
 		result["type"] = "function_call_output"
 	}
+	if origin == transportName && isUnsupportedTransport(itemOutputText(result["output"])) {
+		result["output"] = TransportRetryGuidance
+	}
 	if callID != "" && result["type"] == "function_call_output" {
 		result["id"] = functionItemID(callID)
 	}
@@ -316,6 +339,57 @@ func normalizedToolOutput(item map[string]any, origins map[string]string) map[st
 		}
 	}
 	return result
+}
+
+// isBasispointsOwnTool 判断一个工具名是 basispoints 自带、Codex 没声明的工具。
+// 有原生声明清单时以清单为准（不在清单里 = basispoints 自带）；没有清单则用已知的自带工具名兜底。
+func isBasispointsOwnTool(name string, nativeNames map[string]bool) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || name == transportName {
+		return false
+	}
+	if len(nativeNames) > 0 {
+		return !nativeNames[name]
+	}
+	return basispointsOwnTools[name]
+}
+
+// basispointsOwnTools 是 basispoints 服务端自带工具名（2026-09-27 实测回显），用于没有原生声明清单时兜底。
+var basispointsOwnTools = map[string]bool{
+	"request_user_input_basispoints": true, "read_ranges": true, "write_range": true, "clear_range": true,
+	"format_range": true, "copy_range_to": true, "resize_range": true, "read_range_image": true,
+	"search_workbook": true, "list_items": true, "read_sheets_metadata": true, "update_sheet": true,
+	"update_workbook": true, "update_sheet_view": true, "pivot_table": true, "chart": true, "table": true,
+	"list_connectors": true, "run_connector_action": true,
+	"list_skills": true, "read_skills": true, "create_skill": true, "update_skill": true,
+}
+
+// unavailableToolOutput 把 Codex 对 basispoints 自带工具的 unsupported 结果换成引导：这些工具在这里不存在，
+// 改用 functions 命名空间下的客户端工具。让模型换工具接着干，而不是反复试探。
+func unavailableToolOutput(item map[string]any) map[string]any {
+	result := cloneItem(item)
+	name := "the requested tool"
+	if callID := stringField(result, "call_id"); callID != "" {
+		result["id"] = functionItemID(callID)
+	}
+	result["output"] = "Tool call rejected: " + name + " is not available. This request is relayed by an external Codex client, " +
+		"not the live Excel workbook, so Excel, workbook, connector, and skills tools do not exist here. Use the client tools in the " +
+		"functions namespace instead (for example functions.exec running tools.exec_command / apply_patch). Do not call it again."
+	return result
+}
+
+// TransportRetryGuidance 替换客户端对"解不出的 run_officejs"的拒绝结果，让模型重发一次而不是停下来。
+// 文案照 excel-codex-bridge 的 _TRANSPORT_RETRY_GUIDANCE。
+const TransportRetryGuidance = "The previous run_officejs relay was rejected because its transport envelope was malformed, " +
+	"so the client tool did not run. Retry once now with exactly one outer run_officejs call. Its code field must be " +
+	"JSON text for one catalog client tool: {\"name\":\"TOOL_NAME\",\"arguments\":{...}} for a function tool or " +
+	"{\"name\":\"TOOL_NAME\",\"input\":\"RAW_INPUT\"} for a custom tool. Do not nest run_officejs. Serialize the inner " +
+	"JSON completely and escape backslashes and double quotes inside strings. Do not repeat a call whose output is already present."
+
+// isUnsupportedTransport 判断客户端是不是拒绝了一个它不认识的 run_officejs 调用。
+func isUnsupportedTransport(text string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	return strings.HasPrefix(text, "unsupported call: run_officejs") || strings.HasPrefix(text, "unsupported call: functions.run_officejs")
 }
 
 func itemOutputText(value any) string {

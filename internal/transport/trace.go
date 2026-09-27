@@ -169,11 +169,19 @@ func (f *Forwarder) finishTrace(recorder *recordingStream, requestID string, acc
 	if entry.Route == "" {
 		entry.Route = "codex"
 	}
+	// terminalSeen：响应里已经出现 completed/failed/incomplete，说明这一轮的结局已经定了。
+	// 之后宿主读完主动关流（context canceled）会让 relay 发一个 error 帧，但那不是真出错，
+	// 不能把已经成功的一轮记成"连接失败"。
+	terminalSeen := result.Outcome != tracelog.OutcomeNoCompleted && result.Outcome != tracelog.OutcomeNonSSE
 	switch {
+	case terminalSeen:
+		// 结局已定，保留 Analyze 的结果（tool_call / text / …），忽略收尾时的取消。
 	case recorder.frameErr != "":
 		entry.Outcome = tracelog.OutcomeError
 		entry.Error = recorder.frameErr
-	case forwardErr != nil && !cancelled:
+	case cancelled:
+		entry.Outcome = tracelog.OutcomeCancelled
+	case forwardErr != nil:
 		entry.Outcome = tracelog.OutcomeError
 		entry.Error = forwardErr.Error()
 	}

@@ -113,7 +113,7 @@ func RestoreClientCall(native NativeToolCall, catalog *ToolCatalog) (ClientToolC
 	if spec.Type == "function" {
 		var arguments map[string]any
 		if envelope != nil {
-			arguments = coerceObject(envelope["arguments"])
+			arguments = envelopeArguments(envelope)
 		} else {
 			if native.Type != "function_call" {
 				return ClientToolCall{}, false
@@ -147,7 +147,7 @@ func RestoreClientCall(native NativeToolCall, catalog *ToolCatalog) (ClientToolC
 	// custom
 	var input string
 	if envelope != nil {
-		input, ok = envelope["input"].(string)
+		input, ok = envelopeInput(envelope)
 		if !ok {
 			return ClientToolCall{}, false
 		}
@@ -165,6 +165,57 @@ func RestoreClientCall(native NativeToolCall, catalog *ToolCatalog) (ClientToolC
 		Type: "custom_tool_call", ID: itemID, CallID: callID, Name: spec.Name,
 		Namespace: spec.Namespace, Input: input, Native: native.Raw,
 	}, true
+}
+
+// envelopeArguments 取 function 工具的参数。协议要求 {"name","arguments":{…}}，但模型看到参数只有一个 input 的
+// function（Codex Desktop / VSCode 的 apply_patch 就是这样声明的）时常写成 {"name","input":"…"}：
+// 没有 arguments 就把除 name 之外的字段当参数。
+func envelopeArguments(envelope map[string]any) map[string]any {
+	if raw, ok := envelope["arguments"]; ok {
+		return coerceObject(raw)
+	}
+	arguments := map[string]any{}
+	for key, value := range envelope {
+		if key != "name" {
+			arguments[key] = value
+		}
+	}
+	if len(arguments) == 0 {
+		return nil
+	}
+	return arguments
+}
+
+// envelopeInput 取 custom 工具的原始输入。协议要求 {"name","input":"…"}；模型也可能写成
+// {"name","arguments":"…"} 或 {"name","arguments":{"input":"…"}}，这两种也接受。
+func envelopeInput(envelope map[string]any) (string, bool) {
+	if input, ok := envelope["input"].(string); ok {
+		return input, true
+	}
+	switch arguments := envelope["arguments"].(type) {
+	case string:
+		if object := decodeObject(arguments); object != nil {
+			return singleString(object)
+		}
+		return arguments, true
+	case map[string]any:
+		return singleString(arguments)
+	}
+	return "", false
+}
+
+// singleString 取对象里的 input 字段，或唯一的字符串字段。
+func singleString(object map[string]any) (string, bool) {
+	if input, ok := object["input"].(string); ok {
+		return input, true
+	}
+	if len(object) == 1 {
+		for _, value := range object {
+			text, ok := value.(string)
+			return text, ok
+		}
+	}
+	return "", false
 }
 
 // transportEnvelope 解析 run_officejs 的 code 字段，返回内层 {name, arguments/input}。
@@ -205,8 +256,12 @@ func decodeTransportCode(code any) map[string]any {
 		return nil
 	}
 	candidates := []string{text}
-	if repaired := repairInvalidJSONBackslashes(text); repaired != text {
+	repaired := repairInvalidJSONBackslashes(text)
+	if repaired != text {
 		candidates = append(candidates, repaired)
+	}
+	if quoted := repairUnescapedQuotes(repaired); quoted != repaired {
+		candidates = append(candidates, quoted)
 	}
 	for _, candidate := range candidates {
 		if obj := decodeObject(candidate); obj != nil {
@@ -301,6 +356,54 @@ func repairInvalidJSONBackslashes(text string) string {
 		}
 	}
 	return out.String()
+}
+
+// repairUnescapedQuotes 把字符串值里没转义的双引号补上反斜杠。模型拼 shell 命令时常漏掉，比如
+// "cmd":"rg \"a|b\(" backend" 里 \( 后面那个引号：真正的字符串结尾后面一定跟 , } ] : 或结束，
+// 否则就当成字面引号。
+func repairUnescapedQuotes(text string) string {
+	var out strings.Builder
+	inString := false
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if !inString {
+			out.WriteByte(c)
+			if c == '"' {
+				inString = true
+			}
+			continue
+		}
+		switch c {
+		case '\\':
+			out.WriteByte(c)
+			if i+1 < len(text) {
+				out.WriteByte(text[i+1])
+				i++
+			}
+		case '"':
+			next := nextNonSpace(text, i+1)
+			if next == 0 || next == ',' || next == '}' || next == ']' || next == ':' {
+				out.WriteByte(c)
+				inString = false
+			} else {
+				out.WriteString(`\"`)
+			}
+		default:
+			out.WriteByte(c)
+		}
+	}
+	return out.String()
+}
+
+func nextNonSpace(text string, from int) byte {
+	for i := from; i < len(text); i++ {
+		switch text[i] {
+		case ' ', '\t', '\r', '\n':
+			continue
+		}
+		return text[i]
+	}
+	return 0
 }
 
 func isHex(s string) bool {

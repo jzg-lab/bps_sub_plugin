@@ -16,12 +16,13 @@ const (
 	OutcomeFailed         = "failed"          // response.failed / incomplete
 	OutcomeNonSSE         = "non_sse"         // 不是 SSE（非流式或错误体）
 	OutcomeError          = "error"           // 插件转发出错
+	OutcomeCancelled      = "cancelled"       // 宿主在收到结局前主动结束（客户端断开、插件停用）
 )
 
 // Abnormal 判断结局是否属于要保存原文的异常。
 func Abnormal(outcome string) bool {
 	switch outcome {
-	case OutcomeToolCall, OutcomeText, OutcomeNonSSE:
+	case OutcomeToolCall, OutcomeText, OutcomeNonSSE, OutcomeCancelled:
 		return false
 	}
 	return true

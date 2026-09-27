@@ -176,11 +176,19 @@ func (t *toolStreamTransform) completeBlock(eventType string, payload map[string
 	resp, _ := payload["response"].(map[string]any)
 
 	var calls []basispoints.ClientToolCall
+	var unrestored []map[string]any
 	if eventType == "response.completed" && resp != nil {
-		calls = t.extractCalls(resp)
+		calls, unrestored = t.extractCalls(resp)
 	}
 	if len(calls) == 0 {
-		return sseEncode(eventType, payload) // 不是工具调用，原样发终态事件。
+		// 没有能还原的调用。以前连解不出的 run_officejs 也一起吞掉，客户端只收到"我马上去改"就结束了这一轮。
+		// 现在把解不出的调用原样发给客户端：Codex 会回 unsupported call 并继续下一轮，
+		// 插件在回放时把那个结果换成重试指引，模型就会重发一次。
+		var out []byte
+		for _, item := range unrestored {
+			out = append(out, rawToolItemEvents(item, t.outputIndexOf(item))...)
+		}
+		return append(out, sseEncode(eventType, payload)...)
 	}
 
 	// 有工具调用：合成还原后的调用事件，再发改写过的 completed。
@@ -205,12 +213,13 @@ func (t *toolStreamTransform) completeBlock(eventType string, payload map[string
 	return out
 }
 
-// extractCalls 从 completed 的 output 里提取并还原客户端工具调用。
-func (t *toolStreamTransform) extractCalls(resp map[string]any) []basispoints.ClientToolCall {
+// extractCalls 从 completed 的 output 里提取并还原客户端工具调用；第二个返回值是解不出的 run_officejs 调用。
+func (t *toolStreamTransform) extractCalls(resp map[string]any) ([]basispoints.ClientToolCall, []map[string]any) {
 	output, ok := resp["output"].([]any)
 	if !ok {
-		return nil
+		return nil, nil
 	}
+	var unrestored []map[string]any
 	parallel := t.decision.Body["parallel_tool_calls"] != false
 	var calls []basispoints.ClientToolCall
 	for _, raw := range output {
@@ -226,6 +235,7 @@ func (t *toolStreamTransform) extractCalls(resp map[string]any) []basispoints.Cl
 		if !ok {
 			if basispoints.IsTransportItem(item) {
 				t.stats.ToolDecodeFailed.Add(1)
+				unrestored = append(unrestored, item)
 			}
 			continue
 		}
@@ -234,7 +244,38 @@ func (t *toolStreamTransform) extractCalls(resp map[string]any) []basispoints.Cl
 			break
 		}
 	}
-	return calls
+	return calls, unrestored
+}
+
+// outputIndexOf 找出一个完成项在上游 output 里的位置（取自 output_item.done 事件）。
+func (t *toolStreamTransform) outputIndexOf(item map[string]any) int {
+	id := stringField(item, "id")
+	for _, entry := range t.finishedItems {
+		if stringField(entry.item, "id") == id {
+			return entry.index
+		}
+	}
+	return 0
+}
+
+// rawToolItemEvents 把一个原生调用原样补发成 added → arguments.done → item.done（它的事件之前被扣留了）。
+func rawToolItemEvents(item map[string]any, outputIndex int) []byte {
+	if outputIndex < 0 {
+		outputIndex = 0
+	}
+	id := stringField(item, "id")
+	arguments := stringField(item, "arguments")
+	added := map[string]any{}
+	for key, value := range item {
+		added[key] = value
+	}
+	added["status"], added["arguments"] = "in_progress", ""
+	var out []byte
+	out = append(out, sseEncode("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": outputIndex, "item": added})...)
+	out = append(out, sseEncode("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": outputIndex, "item_id": id, "delta": arguments})...)
+	out = append(out, sseEncode("response.function_call_arguments.done", map[string]any{"type": "response.function_call_arguments.done", "output_index": outputIndex, "item_id": id, "arguments": arguments})...)
+	out = append(out, sseEncode("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": outputIndex, "item": item})...)
+	return out
 }
 
 // finish 在流结束时收尾：上游在 completed 之前断流且已有完成项，就补一个 completed。

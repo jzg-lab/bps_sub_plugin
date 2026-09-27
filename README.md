@@ -21,6 +21,9 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部 **basispoi
 - **带工具的请求也支持**（工具中转，默认开）：basispoints 不收客户端工具，插件把工具写进提示词目录，
   模型经 `run_officejs` 发起调用，插件在 SSE 流里实时还原成 Codex 声明的 `function_call`/`custom_tool_call`，
   多轮之间用宿主 KV 回放工具调用与结果。function、custom（apply_patch）、update_plan、并行调用都支持。
+  内层 envelope 兼容 `{input}` 形态（Codex Desktop/VSCode 把 apply_patch 声明成 function）、未转义引号修复；
+  还原不了的调用原样交给客户端并在下一轮给出重试引导。原生模式下模型误调 basispoints 自带的 Excel/技能工具时，
+  其结果被换成「改用 functions 工具」的引导。
 
 basispoints 拒绝请求（模型无权限、请求体不兼容、被 Cloudflare 拦截、连不上）时自动回落 codex。
 配置页能看到路由、回落、工具中转的计数。默认**不启用 basispoints**，升级插件不会改变现有行为。

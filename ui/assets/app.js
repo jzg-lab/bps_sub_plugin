@@ -32,6 +32,7 @@
     commentary_only: "只说要做、没调工具",
     unknown_tool: "调了 Codex 没有的工具",
     no_completed: "中途断开",
+    cancelled: "宿主提前结束（正常）",
     failed: "上游报失败",
     non_sse: "非流式/错误体",
     tool_non_stream: "非流式带工具",

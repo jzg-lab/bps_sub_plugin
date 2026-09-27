@@ -332,3 +332,22 @@ list_connectors/run_connector_action、run_officejs、web_search。
 - [ ] **F3** 实测 allowed_tools；按结果做 A 或 B + 单测。
 - [ ] **F4** 日志误报修正。
 - [ ] **F5** 联调：Codex CLI 伪装成 apply_patch=function 的客户端 → 真实 basispoints，确认补丁真的落到文件；打包 0.6.2；提交推送。
+
+### 11.4 执行记录
+- **2026-09-28 F1 ✅**：`envelopeArguments`（function 没有 arguments 时用除 name 外的字段）、`envelopeInput`（custom 接受
+  arguments 为字符串 / {input} / 单字段）；`repairUnescapedQuotes`（字符串里后面不跟 , } ] : 的引号当字面引号补转义）。
+  单测用生产日志里的两个真实样本：apply_patch `{"name","input"}` → function_call；未转义引号的 exec_command → 还原成功。
+- **2026-09-28 F2 ✅**：还原不了的 run_officejs 不再吞掉，按上游的 output_index 原样补发 added/arguments/done 事件；
+  回放时原样回放（不再 fallback 重建），`unsupported call: run_officejs` 结果换成 `TransportRetryGuidance`。
+  Codex CLI 实测：收到 run_officejs → 回 `unsupported call: run_officejs` 并发起下一轮（没有停住）。
+- **2026-09-28 F3 实测 A**：basispoints 对 `tool_choice`（auto / allowed_tools / function）和 `parallel_tool_calls`
+  一律 422，`tools:[]` 被忽略（模型照样调 list_skills）→ A 不可行，做 B。
+  B 可行性：把被拦的调用 + `function_call_output`（"不可用，用 functions.exec"）回放给 basispoints，
+  同一会话下一次请求模型改用 `exec`（实测 200）。
+  B 设计：原生工具模式下整段缓冲响应；completed 里有**客户端没声明**的 function_call 时，不发给宿主，
+  把本轮 output（reasoning/message/调用）+ 每个被拦调用的"不可用"结果追加到请求里再发一次 basispoints，最多 2 次；
+  还是有未声明工具就把最后一次的响应原样给宿主（不会比现在差）。没有未声明工具的响应照常透传。
+  代价：原生模式的响应改成整段缓冲后再发（流式打字效果变成一次性出现）——**只在响应里出现未声明工具时才需要缓冲**，
+  所以实现为：边收边转发，一旦看到未声明工具的 `output_item.added` 就停止转发、改为缓冲；此前已发出的事件（reasoning、commentary）
+  保留，续上的请求的事件接着发，最后只发续上请求的 completed。
+

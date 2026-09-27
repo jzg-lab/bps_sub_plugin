@@ -368,3 +368,36 @@ func TestAdditionalToolsRewritesUpdatePlan(t *testing.T) {
 		t.Fatalf("plan not rewritten consistently:\ndeltas=%s\ndone=%s\nitem=%s\ncompleted=%s", deltas.String(), done, itemDone, completed)
 	}
 }
+
+// 解不出的 run_officejs 不能吞掉：原样发给宿主，Codex 才会继续下一轮（回 unsupported call），
+// 否则客户只看到"我马上去改"就停了。
+func TestToolStreamPassesThroughUndecodableTransport(t *testing.T) {
+	forwarder := toolForwarder(t, toolUpstreams(t, runOfficejsSSE(`this is not json at all`)), newMemStore())
+	stream := toolStream(bpsToolBody)
+	if err := forwarder.Forward(stream); err != nil {
+		t.Fatal(err)
+	}
+	_, body, _, frameErr := collect(t, stream.frames())
+	if frameErr != nil {
+		t.Fatalf("err=%+v", frameErr)
+	}
+	var added, done map[string]any
+	for _, e := range parseEvents(t, body) {
+		if item, ok := e.Payload["item"].(map[string]any); ok && item["type"] == "function_call" {
+			if e.Event == "response.output_item.added" {
+				added = item
+			} else if e.Event == "response.output_item.done" {
+				done = item
+			}
+		}
+	}
+	if added == nil || done == nil || done["name"] != "run_officejs" || done["call_id"] != "call_abc" {
+		t.Fatalf("undecodable call must reach the host: added=%v done=%v\n%s", added, done, body)
+	}
+	if !strings.Contains(body, "I'll run pwd.") || !strings.Contains(body, "response.completed") {
+		t.Fatal("commentary and completed must still be delivered")
+	}
+	if forwarder.Stats.ToolDecodeFailed.Load() != 1 || forwarder.Stats.ToolRelayed.Load() != 0 {
+		t.Fatalf("decode_failed=%d relayed=%d", forwarder.Stats.ToolDecodeFailed.Load(), forwarder.Stats.ToolRelayed.Load())
+	}
+}

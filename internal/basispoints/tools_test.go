@@ -2,6 +2,7 @@ package basispoints
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -58,6 +59,12 @@ func TestParseToolsNoneAndEmpty(t *testing.T) {
 func nativeFunctionCall(name, arguments string) NativeToolCall {
 	return NativeToolCall{Type: "function_call", Name: name, CallID: "call_1", ItemID: "fc_up", Arguments: arguments,
 		Raw: map[string]any{"type": "function_call", "name": name, "call_id": "call_1", "arguments": arguments}}
+}
+
+// transportCall 包一个 run_officejs 中转调用，code 是内层 JSON 文本。
+func transportCall(code string) NativeToolCall {
+	arguments, _ := json.Marshal(map[string]any{"summary": "s", "extended_summary": "e", "code": code, "destructive": false, "references": []any{}})
+	return nativeFunctionCall(transportName, string(arguments))
 }
 
 func execCatalog(t *testing.T) *ToolCatalog {
@@ -295,5 +302,118 @@ func TestEmptyAdditionalToolsIsNotNative(t *testing.T) {
 	decision := Decide(enabledConfig(), identityHeader(), []byte(`{"model":"gpt-5.6-sol","input":[{"type":"additional_tools","tools":[]},{"type":"message","role":"user","content":"hi"}]}`))
 	if !decision.Route || decision.NativeTools {
 		t.Fatalf("route=%v native=%v", decision.Route, decision.NativeTools)
+	}
+}
+
+// 生产日志（2026-09-28）：Codex Desktop / VSCode 把 apply_patch 声明成 function {"input": string}，
+// 模型按声明写 {"name":"apply_patch","input":"…"}，没有 arguments。旧版还原失败、调用被吞，客户看到"说要改就停"。
+func TestRestoreFunctionFromInputEnvelope(t *testing.T) {
+	catalog := ParseTools(toolSource(t, `{"tools":[{"type":"function","name":"apply_patch","parameters":{"type":"object","properties":{"input":{"type":"string"}},"required":["input"],"additionalProperties":false}}]}`))
+	patch := "*** Begin Patch\n*** Update File: a.go\n@@\n-x\n+y\n*** End Patch\n"
+	code, _ := json.Marshal(map[string]any{"name": "apply_patch", "input": patch})
+	call, ok := RestoreClientCall(transportCall(string(code)), catalog)
+	if !ok || call.Type != "function_call" || call.Name != "apply_patch" {
+		t.Fatalf("call=%+v ok=%v", call, ok)
+	}
+	var args map[string]any
+	_ = json.Unmarshal([]byte(call.Arguments), &args)
+	if args["input"] != patch || len(args) != 1 {
+		t.Fatalf("arguments=%v", args)
+	}
+}
+
+func TestRestoreCustomFromArgumentsEnvelope(t *testing.T) {
+	catalog := execCatalog(t)
+	for _, code := range []string{
+		`{"name":"apply_patch","arguments":"*** Begin Patch\n*** End Patch"}`,
+		`{"name":"apply_patch","arguments":{"input":"*** Begin Patch\n*** End Patch"}}`,
+		`{"name":"apply_patch","arguments":{"patch":"*** Begin Patch\n*** End Patch"}}`,
+	} {
+		call, ok := RestoreClientCall(transportCall(code), catalog)
+		if !ok || call.Type != "custom_tool_call" || call.Input != "*** Begin Patch\n*** End Patch" {
+			t.Errorf("%s: call=%+v ok=%v", code, call, ok)
+		}
+	}
+}
+
+// 生产日志：shell 命令里的双引号没转义（rg \"a|b\\(" backend），整个内层 JSON 解析失败。
+func TestRestoreRepairsUnescapedQuotes(t *testing.T) {
+	code, err := os.ReadFile("testdata/unescaped_quote_code.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := execCatalog(t)
+	call, ok := RestoreClientCall(transportCall(string(code)), catalog)
+	if !ok || call.Name != "exec_command" {
+		t.Fatalf("call=%+v ok=%v", call, ok)
+	}
+	var args map[string]any
+	_ = json.Unmarshal([]byte(call.Arguments), &args)
+	cmd, _ := args["cmd"].(string)
+	if !strings.Contains(cmd, `functionActivities\(" backend --glob`) {
+		t.Fatalf("cmd=%q", cmd)
+	}
+	// 正常 JSON 不受影响。
+	if got := repairUnescapedQuotes(`{"a":"b","c":["d"]}`); got != `{"a":"b","c":["d"]}` {
+		t.Fatalf("valid JSON changed: %s", got)
+	}
+}
+
+// 上一轮原样交给客户端的 run_officejs：原样回放，客户端的 unsupported call 换成重试指引。
+func TestReplayUnrestoredTransportWithRetryGuidance(t *testing.T) {
+	body := `{"model":"gpt-5.6-sol","tools":[{"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}}],
+		"input":[{"type":"message","role":"user","content":"fix it"},
+		{"type":"function_call","id":"fc_up","call_id":"call_bad","name":"run_officejs","arguments":"{\"code\":\"broken\"}"},
+		{"type":"function_call_output","call_id":"call_bad","output":"unsupported call: run_officejs"}]}`
+	input := build(t, body)["input"].([]any)
+	call := input[len(input)-2].(map[string]any)
+	if call["name"] != "run_officejs" || call["arguments"] != `{"code":"broken"}` || call["id"] != "fc_up" {
+		t.Fatalf("unrestored call must replay verbatim: %v", call)
+	}
+	output := input[len(input)-1].(map[string]any)
+	if output["output"] != TransportRetryGuidance || output["id"] != "fc_call_bad" {
+		t.Fatalf("output must become retry guidance: %v", output)
+	}
+}
+
+// 原生模式：模型误调 basispoints 自带的 Excel/技能工具，Codex 回 unsupported；回放时把结果换成引导，
+// 让模型改用 functions 工具，而不是反复试探不存在的工具。
+func TestNativeUnavailableToolOutputGuidance(t *testing.T) {
+	body := `{"model":"gpt-5.6-sol","input":[
+		{"type":"additional_tools","role":"developer","tools":[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}]},
+		{"type":"message","role":"user","content":"在 Excel 里列个表"},
+		{"type":"function_call","id":"fc_1","call_id":"call_x","name":"list_skills","arguments":"{\"limit\":8}"},
+		{"type":"function_call_output","call_id":"call_x","output":"unsupported call: list_skills"},
+		{"type":"custom_tool_call","id":"ctc_1","call_id":"call_e","name":"exec","input":"text(1)"},
+		{"type":"custom_tool_call_output","call_id":"call_e","output":"ok"}]}`
+	input := build(t, body)["input"].([]any)
+	call := input[2].(map[string]any)
+	if call["name"] != "list_skills" || call["type"] != "function_call" {
+		t.Fatalf("excel tool call must replay verbatim: %v", call)
+	}
+	out := input[3].(map[string]any)
+	if !strings.Contains(out["output"].(string), "functions namespace") || out["id"] != "fc_call_x" {
+		t.Fatalf("unavailable output not rewritten: %v", out)
+	}
+	// 客户端声明过的 exec 及其结果不受影响。
+	if exec := input[4].(map[string]any); exec["input"] != "text(1)" {
+		t.Fatalf("declared tool changed: %v", exec)
+	}
+	if execOut := input[5].(map[string]any); execOut["output"] != "ok" {
+		t.Fatalf("declared tool output changed: %v", execOut)
+	}
+}
+
+func TestIsBasispointsOwnTool(t *testing.T) {
+	declared := map[string]bool{"exec": true, "functions.exec": true, "apply_patch": true}
+	if !isBasispointsOwnTool("list_skills", declared) || isBasispointsOwnTool("exec", declared) {
+		t.Fatal("with a declared set, only undeclared names are own-tools")
+	}
+	// 没有清单时用兜底表。
+	if !isBasispointsOwnTool("read_sheets_metadata", nil) || isBasispointsOwnTool("exec_command", nil) {
+		t.Fatal("fallback table wrong")
+	}
+	if isBasispointsOwnTool("update_plan", nil) {
+		t.Fatal("update_plan is handled separately, not as an own-tool")
 	}
 }

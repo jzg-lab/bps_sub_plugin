@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -151,4 +152,54 @@ func TestTraceNudgeSavesIncident(t *testing.T) {
 			t.Errorf("missing %s: %v", name, err)
 		}
 	}
+}
+
+// 宿主读到 completed 后主动关流（context canceled）：这一轮已经成功，不能记成 error（这是生产日志里 103 条误报的成因）。
+func TestFinishTraceCompletedThenCancelIsNotError(t *testing.T) {
+	msg := map[string]any{"type": "message", "role": "assistant", "phase": "final_answer", "content": []any{map[string]any{"type": "output_text", "text": "done"}}}
+	body := []byte(sse("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"output": []any{msg}}}))
+	dir := t.TempDir()
+	writer, err := tracelog.New(tracelog.Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &Forwarder{Stats: &Stats{}}
+	f.SetTrace(writer)
+	recorder := &recordingStream{status: 200, body: body}
+	recorder.info.route = "bps"
+	// forwardErr = context.Canceled, cancelled = true：宿主收到 completed 后关流。
+	f.finishTrace(recorder, "r1", 1, context.Canceled, true)
+	writer.Close()
+	entry := readOne(t, dir)
+	if entry.Outcome != tracelog.OutcomeText || entry.Error != "" {
+		t.Fatalf("completed-then-cancel must stay text: %+v", entry)
+	}
+	// 对照：还没出结局就被取消 → cancelled（也不算 error）。
+	f2 := &Forwarder{Stats: &Stats{}}
+	dir2 := t.TempDir()
+	w2, _ := tracelog.New(tracelog.Options{Dir: dir2})
+	f2.SetTrace(w2)
+	rec2 := &recordingStream{status: 200, body: []byte(sse("response.created", map[string]any{"type": "response.created"}) + sse("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "delta": "x"}))}
+	rec2.info.route = "bps"
+	f2.finishTrace(rec2, "r2", 1, context.Canceled, true)
+	w2.Close()
+	if entry := readOne(t, dir2); entry.Outcome != tracelog.OutcomeCancelled {
+		t.Fatalf("cut-off cancel must be cancelled: %+v", entry)
+	}
+}
+
+func readOne(t *testing.T, dir string) tracelog.Entry {
+	t.Helper()
+	matches, _ := filepath.Glob(filepath.Join(dir, "requests-*.jsonl"))
+	for _, path := range matches {
+		data, _ := os.ReadFile(path)
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			var entry tracelog.Entry
+			if json.Unmarshal([]byte(line), &entry) == nil {
+				return entry
+			}
+		}
+	}
+	t.Fatal("no entry")
+	return tracelog.Entry{}
 }
