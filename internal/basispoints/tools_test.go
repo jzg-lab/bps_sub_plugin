@@ -142,22 +142,71 @@ func TestRestoreUnwrapsDoubleNested(t *testing.T) {
 	}
 }
 
+// codexPlanTool 是 Codex 声明的 update_plan（顶层 tools 形态）。
+const codexPlanTool = `{"tools":[{"type":"function","name":"update_plan","parameters":{"type":"object","properties":{"explanation":{"type":"string"},"plan":{"type":"array","items":{"type":"object","properties":{"step":{"type":"string"},"status":{"type":"string","enum":["pending","in_progress","completed"]}},"required":["step","status"],"additionalProperties":false}}},"required":["plan"],"additionalProperties":false}}]}`
+
+// nativePlanArgs 是 basispoints 自带 update_plan 的真实参数（2026-09-27 抓包）。
+const nativePlanArgs = `{"summary":"规划并统计 Python 文件","plan":[{"id":"step1","description":"扫描 Python 文件","status":"in_progress","result":""},{"id":"step2","description":"统计行数","status":"pending","result":""},{"id":"step3","description":"汇报","status":"done","result":"x"}]}`
+
 func TestUpdatePlanRestore(t *testing.T) {
-	catalog := ParseTools(toolSource(t, `{"tools":[{"type":"function","name":"update_plan","parameters":{"type":"object","properties":{"plan":{"type":"array"}}}}]}`))
-	native := nativeFunctionCall("update_plan", `{"explanation":"go","plan":[{"step":"a","status":"done"},{"step":"b","status":"doing"}]}`)
-	call, ok := RestoreClientCall(native, catalog)
+	catalog := ParseTools(toolSource(t, codexPlanTool))
+	call, ok := RestoreClientCall(nativeFunctionCall("update_plan", nativePlanArgs), catalog)
 	if !ok {
-		t.Fatal("update_plan should restore")
+		t.Fatal("native update_plan must restore into the client schema")
 	}
 	var args map[string]any
 	_ = json.Unmarshal([]byte(call.Arguments), &args)
 	plan := args["plan"].([]any)
-	first := plan[0].(map[string]any)
-	if first["description"] != "a" || first["status"] != "completed" || first["id"] != "step1" {
-		t.Fatalf("plan not converted to native schema: %v", first)
+	if len(plan) != 3 || args["explanation"] != "规划并统计 Python 文件" || args["summary"] != nil {
+		t.Fatalf("plan not converted to client schema: %v", args)
 	}
-	if args["summary"] != "go" {
-		t.Fatalf("summary wrong: %v", args["summary"])
+	if first := plan[0].(map[string]any); first["step"] != "扫描 Python 文件" || first["status"] != "in_progress" || len(first) != 2 {
+		t.Fatalf("first step wrong: %v", first)
+	}
+	if last := plan[2].(map[string]any); last["status"] != "completed" {
+		t.Fatalf("status alias not normalized: %v", last)
+	}
+}
+
+func TestClientPlanArguments(t *testing.T) {
+	client := `{"explanation":"go","plan":[{"step":"a","status":"pending"}]}`
+	if got := ClientPlanArgumentsJSON(client); got != client {
+		t.Fatalf("client-shaped arguments must pass through: %s", got)
+	}
+	if got := ClientPlanArgumentsJSON("not json"); got != "not json" {
+		t.Fatalf("bad JSON must pass through: %s", got)
+	}
+	got := ClientPlanArguments(decodeObject(`{"summary":"","plan":[{"description":"a","status":"weird"},{"id":"x"}]}`))
+	if _, has := got["explanation"]; has || len(got["plan"].([]any)) != 1 || got["plan"].([]any)[0].(map[string]any)["status"] != "pending" {
+		t.Fatalf("got %v", got)
+	}
+}
+
+// 原生工具模式下，Codex 回放的 update_plan（客户端格式）要转回 basispoints 原生格式，结果换成 {"status":"ok"}。
+func TestAdditionalToolsReplaysUpdatePlanNatively(t *testing.T) {
+	body := `{"model":"gpt-5.6-sol","input":[
+		{"type":"additional_tools","role":"developer","tools":[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}]},
+		{"type":"message","role":"user","content":"plan it"},
+		{"type":"function_call","id":"fc_1","call_id":"call_p","name":"update_plan","arguments":"{\"explanation\":\"go\",\"plan\":[{\"step\":\"a\",\"status\":\"in_progress\"}]}"},
+		{"type":"function_call_output","call_id":"call_p","output":"Plan updated"},
+		{"type":"custom_tool_call","id":"ctc_1","call_id":"call_e","name":"exec","input":"text(1)"},
+		{"type":"custom_tool_call_output","call_id":"call_e","output":"1"}]}`
+	input := build(t, body)["input"].([]any)
+	call := input[2].(map[string]any)
+	var args map[string]any
+	_ = json.Unmarshal([]byte(call["arguments"].(string)), &args)
+	step := args["plan"].([]any)[0].(map[string]any)
+	if args["summary"] != "go" || step["description"] != "a" || step["id"] != "step1" {
+		t.Fatalf("update_plan not converted back to native schema: %v", args)
+	}
+	if output := input[3].(map[string]any); output["output"] != `{"status":"ok"}` {
+		t.Fatalf("update_plan output not normalized: %v", output)
+	}
+	if exec := input[4].(map[string]any); exec["input"] != "text(1)" || exec["id"] != "ctc_1" {
+		t.Fatalf("other native calls must stay verbatim: %v", exec)
+	}
+	if output := input[5].(map[string]any); output["output"] != "1" {
+		t.Fatalf("other outputs must stay verbatim: %v", output)
 	}
 }
 

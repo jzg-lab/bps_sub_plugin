@@ -179,6 +179,70 @@ func restoreNativeFunctionArguments(name string, arguments map[string]any) map[s
 	return map[string]any{"summary": summary, "plan": nativePlan}
 }
 
+// ClientPlanArguments 把 basispoints 原生 update_plan 参数
+// {"summary","plan":[{"id","description","status","result"}]} 转成 Codex 的
+// {"explanation","plan":[{"step","status"}]}。已经是 Codex 形态（或不是计划）就原样返回。
+func ClientPlanArguments(arguments map[string]any) map[string]any {
+	rawPlan, ok := arguments["plan"].([]any)
+	if !ok {
+		return arguments
+	}
+	plan := make([]any, 0, len(rawPlan))
+	for _, raw := range rawPlan {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, isClient := item["step"]; isClient {
+			return arguments
+		}
+		step, _ := item["description"].(string)
+		if step == "" {
+			continue
+		}
+		status, _ := item["status"].(string)
+		status = normalizePlanStatus(status)
+		if status != "pending" && status != "in_progress" && status != "completed" {
+			status = "pending"
+		}
+		plan = append(plan, map[string]any{"step": step, "status": status})
+	}
+	client := map[string]any{"plan": plan}
+	if summary, _ := arguments["summary"].(string); strings.TrimSpace(summary) != "" {
+		client["explanation"] = summary
+	}
+	return client
+}
+
+// ClientPlanArgumentsJSON 是 ClientPlanArguments 的字符串版本；不需要转换（或解不出 JSON）就原样返回。
+func ClientPlanArgumentsJSON(arguments string) string {
+	decoded := decodeObject(arguments)
+	if decoded == nil {
+		return arguments
+	}
+	converted := ClientPlanArguments(decoded)
+	if _, native := decoded["summary"]; !native && !planHasNativeSteps(decoded) {
+		return arguments
+	}
+	encoded, err := json.Marshal(converted)
+	if err != nil {
+		return arguments
+	}
+	return string(encoded)
+}
+
+func planHasNativeSteps(arguments map[string]any) bool {
+	plan, _ := arguments["plan"].([]any)
+	for _, raw := range plan {
+		if item, ok := raw.(map[string]any); ok {
+			if _, has := item["description"]; has {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // normalizePlanStatus 归一化计划状态别名。
 func normalizePlanStatus(status string) string {
 	key := strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(strings.TrimSpace(status)), "-", "_"), " ", "_")

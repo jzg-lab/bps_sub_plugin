@@ -198,7 +198,14 @@ func translateInput(raw any, catalog *ToolCatalog, replayer Replayer, native boo
 		case "item_reference":
 		case "function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output":
 			if native {
-				result = append(result, item)
+				// 原生调用原样回放；只有 update_plan 被插件改过格式，要转回 basispoints 的原生格式。
+				if kind == "function_call" && stringField(item, "name") == "update_plan" {
+					result = append(result, replayToolCall(item, catalog, replayer, callOrigins))
+				} else if kind == "function_call_output" && callOrigins[stringField(item, "call_id")] == "update_plan" {
+					result = append(result, normalizedToolOutput(item, callOrigins))
+				} else {
+					result = append(result, item)
+				}
 			} else if kind == "function_call" || kind == "custom_tool_call" {
 				result = append(result, replayToolCall(item, catalog, replayer, callOrigins))
 			} else {

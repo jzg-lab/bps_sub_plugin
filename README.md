@@ -54,6 +54,13 @@ basispoints 拒绝请求（模型无权限、请求体不兼容、被 Cloudflare
 这种声明，所以从 0.5.2 起这类请求**不走 run_officejs 中转**，工具调用和历史原样透传（状态里的「原生工具请求」）。
 0.5.1 及更早会在第二轮把工具调用扣掉，表现为模型说「我先读取文件」后这一轮就结束。
 
+从 0.5.3 起：
+
+- **免费号默认不走 basispoints**（配置「这些套餐不走 basispoints」，默认 `free`；套餐从 access token 里读）。
+  2026-09-27 实测免费号走 basispoints 会被 `403 blocked by our usage policy` 封号，business 号正常。
+- basispoints 返回 usage policy 403 时，这次请求自动改走 codex，该账号 24 小时内直接走 codex（插件重启清空）。
+- basispoints 自带的 `update_plan` 参数格式和 Codex 不同，插件在响应里转换、回放时转回，Codex 的计划能正常显示。
+
 ## 构建
 
 需要 Go 1.25+。

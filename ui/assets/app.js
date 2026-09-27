@@ -67,7 +67,8 @@
     }
     if (Array.isArray(config.models)) form.elements.models.value = config.models.join("\n");
     if (Array.isArray(config.account_ids)) form.elements.account_ids.value = config.account_ids.join("\n");
-    if (Array.isArray(config.exclude_plan_types)) form.elements.exclude_plan_types.value = config.exclude_plan_types.join("\n");
+    // 旧版本保存的配置里没有这个字段，插件按默认值（free）处理；这里也显示默认值，免得一保存就清空。
+    form.elements.exclude_plan_types.value = Array.isArray(config.exclude_plan_types) ? config.exclude_plan_types.join("\n") : "free";
   }
 
   function readAccountIDs() {

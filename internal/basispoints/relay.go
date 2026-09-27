@@ -119,7 +119,10 @@ func RestoreClientCall(native NativeToolCall, catalog *ToolCatalog) (ClientToolC
 				return ClientToolCall{}, false
 			}
 			arguments = decodeObject(native.Arguments)
-			arguments = restoreNativeFunctionArguments(spec.Name, arguments)
+			if spec.Name == "update_plan" && arguments != nil {
+				// 上游发的是 basispoints 原生计划格式，转成客户端声明的格式。
+				arguments = ClientPlanArguments(arguments)
+			}
 		}
 		if arguments == nil {
 			return ClientToolCall{}, false

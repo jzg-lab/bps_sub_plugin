@@ -314,3 +314,52 @@ func TestAdditionalToolsCallReachesHost(t *testing.T) {
 		t.Fatalf("stats native=%d decode_failed=%d", forwarder.Stats.NativeTools.Load(), forwarder.Stats.ToolDecodeFailed.Load())
 	}
 }
+
+// basispoints 自带的 update_plan 参数格式和 Codex 不同，原生工具模式下要在 SSE 里改写，其余事件逐字透传。
+func TestAdditionalToolsRewritesUpdatePlan(t *testing.T) {
+	nativeArgs := `{"summary":"plan","plan":[{"id":"step1","description":"scan","status":"in_progress","result":""}]}`
+	fc := map[string]any{"type": "function_call", "id": "fc_p", "call_id": "call_p", "name": "update_plan", "status": "completed", "arguments": nativeArgs}
+	msg := sse("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": 0, "item": map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "I'll plan first."}}}})
+	upstream := sse("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_1", "output": []any{}}}) + msg +
+		sse("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": 1, "item": map[string]any{"type": "function_call", "id": "fc_p", "call_id": "call_p", "name": "update_plan", "arguments": "", "status": "in_progress"}}) +
+		sse("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": 1, "item_id": "fc_p", "delta": `{"summary"`}) +
+		sse("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": 1, "item_id": "fc_p", "delta": nativeArgs[10:]}) +
+		sse("response.function_call_arguments.done", map[string]any{"type": "response.function_call_arguments.done", "output_index": 1, "item_id": "fc_p", "arguments": nativeArgs}) +
+		sse("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": 1, "item": fc}) +
+		sse("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_1", "status": "completed", "output": []any{fc}}})
+	forwarder := toolForwarder(t, toolUpstreams(t, upstream), newMemStore())
+	stream := toolStream(additionalToolsBody)
+	if err := forwarder.Forward(stream); err != nil {
+		t.Fatal(err)
+	}
+	_, body, _, frameErr := collect(t, stream.frames())
+	if frameErr != nil {
+		t.Fatalf("err=%+v", frameErr)
+	}
+	if strings.Contains(body, "summary") || strings.Contains(body, "description") {
+		t.Fatalf("native plan fields leaked to host:\n%s", body)
+	}
+	if !strings.Contains(body, msg) {
+		t.Fatal("non-plan events must be relayed byte-for-byte")
+	}
+	want := `{"explanation":"plan","plan":[{"status":"in_progress","step":"scan"}]}`
+	var deltas strings.Builder
+	var done, itemDone, completed string
+	for _, e := range parseEvents(t, body) {
+		switch e.Event {
+		case "response.function_call_arguments.delta":
+			deltas.WriteString(e.Payload["delta"].(string))
+		case "response.function_call_arguments.done":
+			done = e.Payload["arguments"].(string)
+		case "response.output_item.done":
+			if item := e.Payload["item"].(map[string]any); item["type"] == "function_call" {
+				itemDone = item["arguments"].(string)
+			}
+		case "response.completed":
+			completed = e.Payload["response"].(map[string]any)["output"].([]any)[0].(map[string]any)["arguments"].(string)
+		}
+	}
+	if deltas.String() != want || done != want || itemDone != want || completed != want {
+		t.Fatalf("plan not rewritten consistently:\ndeltas=%s\ndone=%s\nitem=%s\ncompleted=%s", deltas.String(), done, itemDone, completed)
+	}
+}

@@ -179,9 +179,9 @@
 
 - [x] **U1 套餐跳过**：JWT 解析 + config + Decide + 配置页；单测。
 - [x] **U2 usage policy 回落 + 冷却**：fallbackReason、冷却表、状态；单测。
-- [ ] **U3 update_plan 转换**：响应 SSE 改写 + 历史回放；单测；真实 basispoints 返回喂 Codex CLI 验证计划正常显示；
+- [x] **U3 update_plan 转换**：响应 SSE 改写 + 历史回放；单测；真实 basispoints 返回喂 Codex CLI 验证计划正常显示；
       真实 basispoints 验证回放后的第二轮 200。
-- [ ] **U4 打包收尾**：0.5.3 签名包放 `release/0.5.3/`、测试环境装一遍；README/本文；提交推送。
+- [x] **U4 打包收尾**：0.5.3 签名包放 `release/0.5.3/`、测试环境装一遍；README/本文；提交推送。
 
 ### 7.4 执行记录
 
@@ -192,4 +192,14 @@
 - **2026-09-27 U2 ✅**：403 正文含 `blocked by our usage policy` → 回落原因 `usage_policy`，该 chatgpt 账号
   进 `Stats.PolicyCooldown`（内存，24 小时）；冷却期内原因码 `policy_cooldown` 直接发原始请求到 codex；
   状态 `policy_cooldown_accounts` + 配置页。单测：回落、冷却期不打 basispoints、到期恢复、关回落时原样返回 403。
+- **2026-09-27 U3 ✅**：`basispoints.ClientPlanArguments`（原生 → Codex：summary→explanation、description→step、
+  状态别名归一，未知状态当 pending；已是 Codex 形态原样返回）。原生工具模式响应改走 `relayNativeStream`：
+  其它事件逐字透传，update_plan 的 arguments.delta 扣住、done 时补一条完整 delta，item.done / completed 里的参数一并改写。
+  回放：原生模式下 update_plan 调用转回原生格式（沿用 `restoreNativeFunctionArguments`）、结果换 `{"status":"ok"}`，
+  其它原生调用仍原样。中转模式的 update_plan 还原方向也修正为原生 → 客户端（之前反了，旧单测按错误方向写的，已改）。
+  验证：本机 Codex CLI → 插件 Forwarder → 真实 basispoints（账号 12783），任务「先 update_plan 再统计 Python 文件行数」：
+  5 轮全 200，Codex 正常显示计划并逐项打勾（→ / ✓），无 `unknown field summary`；回放给 basispoints 的是原生格式 + `{"status":"ok"}`。
+- **2026-09-27 U4 ✅**：配置页对旧配置（无该字段）显示默认 free，避免一保存就清空（headless Chromium 验证：显示 free、
+  保存带 `["free"]`、状态显示原生工具请求/冷却账号数、原因码中文）。0.5.3 签名包 sha256 `4a6f604e…`，
+  放在 `release/0.5.3/`；测试环境升级 → healthy。README/本文；提交推送。由用户上传生产。
 
