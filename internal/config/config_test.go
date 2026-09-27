@@ -79,6 +79,9 @@ func TestParseRejectsInvalidInput(t *testing.T) {
 		"ttl too large":         `{"tool_call_ttl_seconds":9999999}`,
 		"image too small":       `{"max_image_bytes":100}`,
 		"image too large":       `{"max_image_bytes":134217728}`,
+		"zero account id":       `{"account_ids":[0]}`,
+		"negative account id":   `{"account_ids":[-3]}`,
+		"string account id":     `{"account_ids":["12"]}`,
 	}
 	for name, raw := range cases {
 		if _, err := Parse([]byte(raw)); err == nil {
@@ -108,7 +111,7 @@ func TestJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(want.JSON(), &fields); err != nil {
 		t.Fatal(err)
 	}
-	if len(fields) != 16 {
+	if len(fields) != 17 {
 		t.Fatalf("normalized JSON must contain every field, got %d: %v", len(fields), fields)
 	}
 	if strings.Contains(string(want.JSON()), `<`) {
@@ -127,5 +130,39 @@ func TestCloneDoesNotShareModels(t *testing.T) {
 	defaults.Models[0] = "changed"
 	if DefaultModels[0] == "changed" {
 		t.Fatal("Default must not share DefaultModels")
+	}
+}
+
+func TestAccountIDsNormalizedAndSelected(t *testing.T) {
+	cfg, err := Parse([]byte(`{"account_ids":[12,7,12]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.AccountIDs) != 2 || cfg.AccountIDs[0] != 12 || cfg.AccountIDs[1] != 7 {
+		t.Fatalf("account_ids not deduplicated: %v", cfg.AccountIDs)
+	}
+	if !cfg.AccountSelected(7) || cfg.AccountSelected(8) {
+		t.Fatal("AccountSelected must follow the list")
+	}
+	if !Default().AccountSelected(8) {
+		t.Fatal("empty account_ids must select every account")
+	}
+	if !strings.Contains(string(Default().JSON()), `"account_ids":[]`) {
+		t.Fatalf("default account_ids must serialize as [] not null: %s", Default().JSON())
+	}
+	clone := cfg.Clone()
+	clone.AccountIDs[0] = 99
+	if cfg.AccountIDs[0] == 99 {
+		t.Fatal("Clone must deep-copy AccountIDs")
+	}
+}
+
+func TestTooManyAccountIDs(t *testing.T) {
+	cfg := Default()
+	for i := int64(1); i <= 1001; i++ {
+		cfg.AccountIDs = append(cfg.AccountIDs, i)
+	}
+	if _, err := Parse(cfg.JSON()); err == nil {
+		t.Fatal("1001 account ids must be rejected")
 	}
 }

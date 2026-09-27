@@ -65,6 +65,10 @@ type Config struct {
 	ImageSupport bool `json:"image_support"`
 	// MaxImageBytes 是单张图片解码后允许上传的上限，超过就降级成文本。
 	MaxImageBytes int64 `json:"max_image_bytes"`
+
+	// AccountIDs 是允许改走 basispoints 的 sub2api 账号 ID。空表示不限制；
+	// 非空时其它账号的请求原样发往 codex。宿主灰度只能按比例选账号，这里让管理员手选。
+	AccountIDs []int64 `json:"account_ids"`
 }
 
 // Default 返回默认配置。
@@ -89,6 +93,8 @@ func Default() Config {
 
 		ImageSupport:  true,
 		MaxImageBytes: 10 << 20,
+
+		AccountIDs: []int64{},
 	}
 }
 
@@ -132,6 +138,16 @@ func (c *Config) normalize() {
 		models = append(models, model)
 	}
 	c.Models = models
+	seenIDs := make(map[int64]bool, len(c.AccountIDs))
+	ids := make([]int64, 0, len(c.AccountIDs))
+	for _, id := range c.AccountIDs {
+		if seenIDs[id] {
+			continue
+		}
+		seenIDs[id] = true
+		ids = append(ids, id)
+	}
+	c.AccountIDs = ids
 }
 
 // Validate 检查取值范围。
@@ -177,13 +193,35 @@ func (c Config) Validate() error {
 	if c.MaxImageBytes < 1<<10 || c.MaxImageBytes > 64<<20 {
 		return errors.New("max_image_bytes 必须在 1 KiB 到 64 MiB 之间")
 	}
+	if len(c.AccountIDs) > 1000 {
+		return errors.New("account_ids 最多 1000 个")
+	}
+	for _, id := range c.AccountIDs {
+		if id <= 0 {
+			return fmt.Errorf("账号 ID 无效: %d", id)
+		}
+	}
 	return nil
 }
 
-// Clone 返回深拷贝，避免共享 Models 切片。
+// Clone 返回深拷贝，避免共享 Models / AccountIDs 切片。
 func (c Config) Clone() Config {
 	c.Models = append([]string(nil), c.Models...)
+	c.AccountIDs = append([]int64{}, c.AccountIDs...)
 	return c
+}
+
+// AccountSelected 判断账号是否在白名单内。白名单为空时所有账号都算选中。
+func (c Config) AccountSelected(accountID int64) bool {
+	if len(c.AccountIDs) == 0 {
+		return true
+	}
+	for _, id := range c.AccountIDs {
+		if id == accountID {
+			return true
+		}
+	}
+	return false
 }
 
 // Equal 比较两份配置是否完全相同。

@@ -34,6 +34,8 @@ const (
 	ReasonNoAuthorization = "no_authorization"
 	ReasonNoAccountID     = "no_account_id"
 	ReasonToolNonStream   = "tool_non_stream"
+	// ReasonAccountNotSelected：配置了账号白名单，当前账号不在其中。
+	ReasonAccountNotSelected = "account_not_selected"
 )
 
 // Decision 是路由判定结果。

@@ -96,11 +96,17 @@ func (u *upstreams) forwarder(t *testing.T, mutate func(*config.Config)) *Forwar
 }
 
 func responsesStream(body string) *fakeStream {
+	return responsesStreamForAccount(body, 42)
+}
+
+// responsesStreamForAccount 模拟宿主用指定 sub2api 账号发出的 Responses 请求。
+func responsesStreamForAccount(body string, accountID int64) *fakeStream {
 	return newFakeStream(context.Background(),
 		startFrame(&pluginv1.ForwardRequestStart{
-			Method: http.MethodPost,
-			Url:    codexURL,
-			Host:   "chatgpt.com",
+			AccountId: accountID,
+			Method:    http.MethodPost,
+			Url:       codexURL,
+			Host:      "chatgpt.com",
 			Headers: map[string]*pluginv1.HeaderValues{
 				"Authorization":      {Values: []string{"Bearer tok"}},
 				"Chatgpt-Account-Id": {Values: []string{"acct"}},
@@ -161,11 +167,12 @@ func TestResponsesSkippedGoToCodexUnchanged(t *testing.T) {
 		mutate func(*config.Config)
 		reason string
 	}{
-		"disabled":        {routableBody, func(c *config.Config) { c.BPSEnabled = false }, ""},
-		"model":           {`{"model":"gpt-5.5","input":"hi"}`, nil, "model_not_allowed"},
-		"tools relay off": {`{"model":"gpt-5.6-sol","tools":[{"type":"function","name":"shell"}],"input":"hi"}`, func(c *config.Config) { c.ToolRelay = false }, "has_tools"},
-		"tool non-stream": {`{"model":"gpt-5.6-sol","stream":false,"tools":[{"type":"function","name":"shell"}],"input":"hi"}`, nil, "tool_non_stream"},
-		"too large":       {`{"model":"gpt-5.6-sol","input":"` + strings.Repeat("x", 2<<20) + `"}`, func(c *config.Config) { c.MaxBodyBytes = 1 << 20 }, "body_too_large"},
+		"disabled":         {routableBody, func(c *config.Config) { c.BPSEnabled = false }, ""},
+		"model":            {`{"model":"gpt-5.5","input":"hi"}`, nil, "model_not_allowed"},
+		"tools relay off":  {`{"model":"gpt-5.6-sol","tools":[{"type":"function","name":"shell"}],"input":"hi"}`, func(c *config.Config) { c.ToolRelay = false }, "has_tools"},
+		"tool non-stream":  {`{"model":"gpt-5.6-sol","stream":false,"tools":[{"type":"function","name":"shell"}],"input":"hi"}`, nil, "tool_non_stream"},
+		"too large":        {`{"model":"gpt-5.6-sol","input":"` + strings.Repeat("x", 2<<20) + `"}`, func(c *config.Config) { c.MaxBodyBytes = 1 << 20 }, "body_too_large"},
+		"account filtered": {routableBody, func(c *config.Config) { c.AccountIDs = []int64{7, 8} }, "account_not_selected"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -191,6 +198,22 @@ func TestResponsesSkippedGoToCodexUnchanged(t *testing.T) {
 				t.Fatalf("routed codex = %d", forwarder.Stats.RoutedCodex.Load())
 			}
 		})
+	}
+}
+
+func TestAccountWhitelistRoutesSelectedAccount(t *testing.T) {
+	u := newUpstreams(t, nil)
+	forwarder := u.forwarder(t, func(c *config.Config) { c.AccountIDs = []int64{7, 42} })
+	_, body, frameErr := run(t, forwarder, responsesStreamForAccount(routableBody, 42))
+	if frameErr != nil || body != "data: bps\n\n" {
+		t.Fatalf("selected account must go to basispoints: body=%q err=%+v", body, frameErr)
+	}
+	_, body, frameErr = run(t, forwarder, responsesStreamForAccount(routableBody, 43))
+	if frameErr != nil || body != "data: codex\n\n" {
+		t.Fatalf("other account must go to codex: body=%q err=%+v", body, frameErr)
+	}
+	if u.bpsHits.Load() != 1 || u.codexHits.Load() != 1 || forwarder.Stats.SkipReasons.Get("account_not_selected") != 1 {
+		t.Fatalf("hits bps=%d codex=%d skips=%v", u.bpsHits.Load(), u.codexHits.Load(), forwarder.Stats.SkipReasons.Snapshot())
 	}
 }
 

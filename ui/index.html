@@ -10,7 +10,7 @@
   <main>
     <header>
       <h1>BPS Sub Plugin</h1>
-      <p class="muted">把 OpenAI OAuth 账号的请求改走 basispoints 端点。只改写不带工具、不带图片、模型在白名单内的对话请求，其余请求照旧发往 codex。</p>
+      <p class="muted">把 OpenAI OAuth 账号的请求改走 basispoints 端点。只改写选中账号、模型在白名单内的对话请求，其余请求照旧发往 codex。</p>
       <p class="warn">⚠️ basispoints 是未公开的内部端点，使用可能违反 OpenAI 条款、导致账号封禁。建议先小比例灰度。</p>
     </header>
 
@@ -47,6 +47,10 @@
         <label class="check">
           <input type="checkbox" name="bps_enabled">
           <span><strong>启用 basispoints 改写</strong>（关闭时所有请求原样透传）</span>
+        </label>
+        <label class="field wide">
+          <span><strong>只对这些账号生效</strong>（sub2api 账号 ID，每行一个或用逗号分隔；留空 = 所有进入插件的账号都生效）</span>
+          <textarea name="account_ids" rows="4" spellcheck="false" placeholder="例如：12670&#10;12418"></textarea>
         </label>
         <fieldset class="field">
           <legend>路由模式</legend>

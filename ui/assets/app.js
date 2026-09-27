@@ -23,6 +23,9 @@
     has_attachment: "带图片或文件",
     no_authorization: "缺少令牌",
     no_account_id: "缺少账号 ID",
+    account_not_selected: "账号不在生效列表",
+    tool_non_stream: "非流式带工具",
+    image_upload_failed: "图片上传失败",
     model_access_changed: "模型无权限",
     blocked_html: "被 Cloudflare 拦截",
     invalid_body_422: "请求体不兼容（422）",
@@ -60,6 +63,18 @@
       });
     }
     if (Array.isArray(config.models)) form.elements.models.value = config.models.join("\n");
+    if (Array.isArray(config.account_ids)) form.elements.account_ids.value = config.account_ids.join("\n");
+  }
+
+  function readAccountIDs() {
+    var ids = [];
+    var parts = form.elements.account_ids.value.split(/[\s,，;；]+/).filter(Boolean);
+    for (var i = 0; i < parts.length; i++) {
+      if (!/^\d+$/.test(parts[i]) || Number(parts[i]) <= 0) throw new Error("账号 ID 无效：" + parts[i]);
+      var id = Number(parts[i]);
+      if (ids.indexOf(id) < 0) ids.push(id);
+    }
+    return ids;
   }
 
   function readForm() {
@@ -77,6 +92,7 @@
     });
     var mode = form.querySelector('input[name="route_mode"]:checked');
     config.route_mode = mode ? mode.value : "all";
+    config.account_ids = readAccountIDs();
     config.models = form.elements.models.value.split(/\r?\n/).map(function (line) { return line.trim(); }).filter(Boolean);
     if (config.bps_enabled && config.models.length === 0) throw new Error("启用 basispoints 时模型白名单不能为空");
     return config;

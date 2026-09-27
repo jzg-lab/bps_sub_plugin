@@ -5,7 +5,7 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部的 **basis
 的降载路由。以 sub2api 官方插件机制（`openai.oauth.outbound_transport.v1`）交付，
 **不改 sub2api 源码**。
 
-> 状态：阶段 0-4 已完成（插件 0.4.0 在测试环境运行；对话、工具中转、图片上传均已走 basispoints）。各阶段执行记录见 [STAGE2.md](STAGE2.md)、[STAGE3.md](STAGE3.md)、[STAGE4.md](STAGE4.md)。本文随开发进度更新。
+> 状态：阶段 0-5 已完成。插件 0.5.0 已装到生产（签名包，灰度 10%，basispoints 默认关，可按账号白名单开启）。各阶段执行记录见 [STAGE2.md](STAGE2.md)、[STAGE3.md](STAGE3.md)、[STAGE4.md](STAGE4.md)、[STAGE5.md](STAGE5.md)。本文随开发进度更新。
 
 ---
 
@@ -118,7 +118,7 @@ bps_sub_plugin/
 - [x] 签名：开发期用 `allow_unsigned` 未签名包；发布期用本项目自建 Ed25519 密钥
       （`go run ./tools/packager keygen`），公钥加到 `plugins.trusted_publishers`。（2026-09-25 确认）
 - [x] Go module：`github.com/jzg-lab/bps_sub_plugin`；插件 ID：`io.github.jzg-lab.bps-sub-plugin`。
-- [ ] 上线节奏：建议先灰度 10% 再放量（阶段 4 前确认）。
+- [x] 上线节奏：生产先灰度 10%，basispoints 用账号白名单逐个开（2026-09-27）。
 
 ## 8. 阶段 1 实现备注
 

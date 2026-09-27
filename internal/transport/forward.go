@@ -195,7 +195,11 @@ func (f *Forwarder) forward(ctx context.Context, stream Stream) error {
 	cfg := f.Pool.Config()
 
 	if start.HasBody && cfg.BPSEnabled && isResponsesCandidate(request) {
-		return f.forwardResponses(ctx, stream, transport, cfg, request, bodyReader, start.ContentLength)
+		if cfg.AccountSelected(start.AccountId) {
+			return f.forwardResponses(ctx, stream, transport, cfg, request, bodyReader, start.ContentLength)
+		}
+		// 不在账号白名单：不读请求体，直接按下面的原样透传。
+		f.Stats.SkipReasons.Add(basispoints.ReasonAccountNotSelected)
 	}
 
 	if start.HasBody {
