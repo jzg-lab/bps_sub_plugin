@@ -14,6 +14,7 @@ import (
 
 	"github.com/jzg-lab/bps_sub_plugin/internal/basispoints"
 	pluginv1 "github.com/jzg-lab/bps_sub_plugin/internal/pluginapi/v1"
+	"github.com/jzg-lab/bps_sub_plugin/internal/tracelog"
 )
 
 // 错误帧里的 code，宿主只做展示和日志。
@@ -61,6 +62,8 @@ type Stats struct {
 	NativeTools         atomic.Int64 // additional_tools 请求，工具原样透传的次数
 	// PolicyCooldown 是被 usage policy 拒绝、暂时直接走 codex 的账号。
 	PolicyCooldown Cooldown
+	// Outcomes 是排查日志里每轮结局的计数（tool_call、commentary_only、unknown_tool…）。
+	Outcomes Counter
 
 	ImagesUploaded    atomic.Int64 // 成功上传的图片数
 	ImagesReused      atomic.Int64 // 命中上传缓存的图片数
@@ -117,6 +120,19 @@ type Forwarder struct {
 
 	// roundTripper 非空时替代连接池，仅供测试把 chatgpt.com 指向本地服务器。
 	roundTripper http.RoundTripper
+
+	// trace 是排查日志；nil 表示不记。
+	trace atomic.Pointer[tracelog.Writer]
+}
+
+// SetTrace 切换排查日志（nil 关闭）。返回旧的 Writer，调用方负责 Close。
+func (f *Forwarder) SetTrace(writer *tracelog.Writer) *tracelog.Writer {
+	return f.trace.Swap(writer)
+}
+
+// Trace 返回当前的排查日志（可能为 nil）。
+func (f *Forwarder) Trace() *tracelog.Writer {
+	return f.trace.Load()
 }
 
 // ToolStore 记住原生工具调用，供跨轮回放。
@@ -148,7 +164,17 @@ func (f *Forwarder) Forward(stream Stream) error {
 	f.Stats.InFlight.Add(1)
 	defer f.Stats.InFlight.Add(-1)
 	ctx := stream.Context()
-	err := f.forward(ctx, stream)
+	var recorder *recordingStream
+	if f.trace.Load() != nil {
+		recorder = &recordingStream{Stream: stream, started: time.Now()}
+		stream = recorder
+	}
+	var requestID string
+	var accountID int64
+	err := f.forward(ctx, stream, &requestID, &accountID)
+	if recorder != nil {
+		f.finishTrace(recorder, requestID, accountID, err, ctx.Err() != nil)
+	}
 	switch {
 	case ctx.Err() != nil:
 		f.Stats.Cancelled.Add(1)
@@ -165,7 +191,7 @@ func (f *Forwarder) Forward(stream Stream) error {
 // errFrameSent 表示已经用 error 帧告知宿主失败，流本身正常结束。
 var errFrameSent = errors.New("error frame sent")
 
-func (f *Forwarder) forward(ctx context.Context, stream Stream) error {
+func (f *Forwarder) forward(ctx context.Context, stream Stream, requestID *string, accountID *int64) error {
 	first, err := stream.Recv()
 	if err != nil {
 		return err
@@ -174,6 +200,7 @@ func (f *Forwarder) forward(ctx context.Context, stream Stream) error {
 	if start == nil {
 		return f.fail(stream, codeInvalidRequest, "首帧必须是 start", false)
 	}
+	*requestID, *accountID = start.RequestId, start.AccountId
 	request, err := buildRequest(ctx, start)
 	if err != nil {
 		return f.fail(stream, codeInvalidRequest, err.Error(), false)
@@ -203,6 +230,7 @@ func (f *Forwarder) forward(ctx context.Context, stream Stream) error {
 		}
 		// 不在账号白名单：不读请求体，直接按下面的原样透传。
 		f.Stats.SkipReasons.Add(basispoints.ReasonAccountNotSelected)
+		traceOf(stream).codex(basispoints.ReasonAccountNotSelected, nil)
 	}
 
 	if start.HasBody {

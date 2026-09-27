@@ -55,8 +55,13 @@ func toolUpstreams(t *testing.T, sseBody string) *upstreams {
 }
 
 func toolStream(body string) *fakeStream {
+	return toolStreamWithID(body, "", 0)
+}
+
+func toolStreamWithID(body, requestID string, accountID int64) *fakeStream {
 	return newFakeStream(context.Background(),
 		startFrame(&pluginv1.ForwardRequestStart{
+			RequestId: requestID, AccountId: accountID,
 			Method: http.MethodPost, Url: codexURL, Host: "chatgpt.com",
 			Headers: map[string]*pluginv1.HeaderValues{
 				"Authorization": {Values: []string{"Bearer tok"}}, "Chatgpt-Account-Id": {Values: []string{"acct"}},

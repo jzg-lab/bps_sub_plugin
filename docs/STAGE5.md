@@ -257,7 +257,26 @@ list_connectors/run_connector_action、run_officejs、web_search。
 - 状态：最近异常数、日志目录、写失败数；配置页显示。
 
 ### 9.3 执行清单
-- [ ] **L1** tracelog 包（写行、写原文、轮转清理、容量上限）+ 单测。
-- [ ] **L2** SSE 结局识别（对发给宿主的字节解析）+ 接入 Forwarder（bps / codex / 回落 / 冷却各路径）+ 单测。
-- [ ] **L3** 配置项、状态、配置页。
-- [ ] **L4** 测试环境验证真实写盘（容器内权限、路径）；打包 0.6.0；提交推送。
+- [x] **L1** tracelog 包（写行、写原文、轮转清理、容量上限）+ 单测。
+- [x] **L2** SSE 结局识别（对发给宿主的字节解析）+ 接入 Forwarder（bps / codex / 回落 / 冷却各路径）+ 单测。
+- [x] **L3** 配置项、状态、配置页。
+- [x] **L4** 测试环境验证真实写盘（容器内权限、路径）；打包 0.6.0；提交推送。
+
+### 9.4 执行记录
+- **2026-09-27 L1 ✅**：`internal/tracelog`：异步队列（1024，满了丢弃计数）、`requests-YYYYMMDD.jsonl`、
+  原文 `bodies/YYYYMMDD/<id>.req.json|.resp.sse`（单个 8 MiB 截断）、正常轮次原文只留最近 200 个、
+  7 天过期 + 1 GiB 上限（超了删到 90%）、文件名只留 `[A-Za-z0-9_-]`。结局识别 `Analyze`：tool_call / unknown_tool /
+  text / commentary_only / no_completed / failed / non_sse；`DeclaredTools` 收集顶层 tools 和 additional_tools（含 namespace）。
+  用真实 basispoints 返回（脱敏）做 fixture：exec→tool_call、request_user_input_basispoints 与 Excel 工具→unknown_tool。
+- **2026-09-27 L2 ✅**：`recordingStream` 包住宿主流，记状态码、首包、字节、响应（≤16 MiB）；各路由路径记原因、
+  发往上游的请求体（bps 路径是改写后的 basispoints 请求体，不含请求头/令牌）、回落前的 basispoints 错误。
+  只有走 bps（含回落）的请求存原文；直接发 codex 的只记摘要。
+- **2026-09-27 L3 ✅**：配置 `trace_enabled` / `trace_bodies`（默认开）/ `trace_dir`（空=从二进制路径推出
+  `<data>/bps-plugin-logs`，升级不丢）；状态 `trace`（写入/异常/丢弃/失败/各结局计数）；配置页开关和显示，
+  旧配置缺字段时显示为开（headless 验证）。
+- **2026-09-27 L4 ✅**：测试环境 0.6.0 签名包启用后自动建出 `/app/data/bps-plugin-logs/`（sub2api 用户可写）；
+  测试环境没有可用账号（账号 1 额度满、账号 2 error，宿主 503），真实写盘改用本机联调：Codex CLI → Forwarder（开日志）→
+  真实 basispoints（12783）。任务「先问我想要什么，再在 Excel 里列表」：日志 3 轮分别记为
+  `unknown_tool [request_user_input_basispoints]`（原文已存）、`tool_call [request_user_input]`、`text`，首包 14~16 秒。
+  0.6.0 签名包放 `release/0.6.0/`。
+

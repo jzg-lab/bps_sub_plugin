@@ -1,0 +1,57 @@
+event: response.created
+data: {"type": "response.created", "response": {"id": "resp_fixture", "object": "response", "created_at": 1790520762, "status": "in_progress", "access_programs": null, "background": false, "completed_at": null, "error": null, "frequency_penalty": 0.0, "incomplete_details": null, "max_output_tokens": null, "max_tool_calls": null, "model": "gpt-5.6-sol", "moderation": null, "output": [], "parallel_tool_calls": true, "presence_penalty": 0.0, "previous_response_id": null, "prompt_cache_key": "sess-redacted", "prompt_cache_retention": "24h", "reasoning": {"context": "all_turns", "effort": "medium", "mode": "standard", "summary": "detailed"}, "safety_identifier": "user-redacted", "service_tier": "priority", "store": false, "temperature": 1.0, "text": {"format": {"type": "text"}, "verbosity": "medium"}, "tool_choice": "auto", "tool_usage": {"image_gen": {"input_tokens": 0, "input_tokens_details": {"image_tokens": 0, "text_tokens": 0}, "output_tokens": 0, "output_tokens_details": {"image_tokens": 0, "text_tokens": 0}, "total_tokens": 0}, "web_search": {"num_requests": 0}}, "top_logprobs": 0, "top_p": 0.98, "truncation": "disabled", "usage": null, "user": null, "metadata": {"task_id": "33643e6f-7d82-59ba-83a6-d92e080a8ad1", "turn_id": "682f4675-8959-5a94-9a84-9a02eca6ce88", "agent_iteration": "1"}}, "sequence_number": 0}
+
+event: response.in_progress
+data: {"type": "response.in_progress", "response": {"id": "resp_fixture", "object": "response", "created_at": 1790520762, "status": "in_progress", "access_programs": null, "background": false, "completed_at": null, "error": null, "frequency_penalty": 0.0, "incomplete_details": null, "max_output_tokens": null, "max_tool_calls": null, "model": "gpt-5.6-sol", "moderation": null, "output": [], "parallel_tool_calls": true, "presence_penalty": 0.0, "previous_response_id": null, "prompt_cache_key": "sess-redacted", "prompt_cache_retention": "24h", "reasoning": {"context": "all_turns", "effort": "medium", "mode": "standard", "summary": "detailed"}, "safety_identifier": "user-redacted", "service_tier": "priority", "store": false, "temperature": 1.0, "text": {"format": {"type": "text"}, "verbosity": "medium"}, "tool_choice": "auto", "tool_usage": {"image_gen": {"input_tokens": 0, "input_tokens_details": {"image_tokens": 0, "text_tokens": 0}, "output_tokens": 0, "output_tokens_details": {"image_tokens": 0, "text_tokens": 0}, "total_tokens": 0}, "web_search": {"num_requests": 0}}, "top_logprobs": 0, "top_p": 0.98, "truncation": "disabled", "usage": null, "user": null, "metadata": {"task_id": "33643e6f-7d82-59ba-83a6-d92e080a8ad1", "turn_id": "682f4675-8959-5a94-9a84-9a02eca6ce88", "agent_iteration": "1"}}, "sequence_number": 1}
+
+event: response.output_item.added
+data: {"type": "response.output_item.added", "item": {"id": "rs_fixture", "type": "reasoning", "content": [], "summary": []}, "output_index": 0, "sequence_number": 2}
+
+event: response.reasoning_summary_part.added
+data: {"type": "response.reasoning_summary_part.added", "item_id": "rs_fixture", "output_index": 0, "part": {"type": "summary_text", "text": ""}, "sequence_number": 3, "summary_index": 0}
+
+event: response.reasoning_summary_text.done
+data: {"type": "response.reasoning_summary_text.done", "item_id": "rs_fixture", "output_index": 0, "sequence_number": 90, "summary_index": 0, "text": "**Planning file inspection**\n\nI need to inspect files and the workbook context using shell for the directory and spreadsheet tools for the workbook. It's essential to include a preamble in my commentary. I also think listing skills before making workbook edits could be beneficial, even for a simple task. The developer suggests using list_skills before starting relevant tasks, which makes sense. However, I’ll need to consider the limitations of tools and whether I can parallel them effectively."}
+
+event: response.reasoning_summary_part.done
+data: {"type": "response.reasoning_summary_part.done", "item_id": "rs_fixture", "output_index": 0, "part": {"type": "summary_text", "text": "**Planning file inspection**\n\nI need to inspect files and the workbook context using shell for the directory and spreadsheet tools for the workbook. It's essential to include a preamble in my commentary. I also think listing skills before making workbook edits could be beneficial, even for a simple task. The developer suggests using list_skills before starting relevant tasks, which makes sense. However, I’ll need to consider the limitations of tools and whether I can parallel them effectively."}, "sequence_number": 91, "summary_index": 0}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "item": {"id": "rs_fixture", "type": "reasoning", "content": [], "summary": [{"type": "summary_text", "text": "**Planning file inspection**\n\nI need to inspect files and the workbook context using shell for the directory and spreadsheet tools for the workbook. It's essential to include a preamble in my commentary. I also think listing skills before making workbook edits could be beneficial, even for a simple task. The developer suggests using list_skills before starting relevant tasks, which makes sense. However, I’ll need to consider the limitations of tools and whether I can parallel them effectively."}]}, "output_index": 0, "sequence_number": 92}
+
+event: response.output_item.added
+data: {"type": "response.output_item.added", "item": {"id": "msg_fixture", "type": "message", "status": "in_progress", "content": [], "phase": "commentary", "role": "assistant"}, "output_index": 1, "sequence_number": 93}
+
+event: response.content_part.added
+data: {"type": "response.content_part.added", "content_index": 0, "item_id": "msg_fixture", "output_index": 1, "part": {"type": "output_text", "annotations": [], "logprobs": [], "text": ""}, "sequence_number": 94}
+
+event: response.output_text.done
+data: {"type": "response.output_text.done", "content_index": 0, "item_id": "msg_fixture", "logprobs": [], "output_index": 1, "sequence_number": 114, "text": "我先统计当前目录文件大小，再把分布表和图表写进 Excel。"}
+
+event: response.content_part.done
+data: {"type": "response.content_part.done", "content_index": 0, "item_id": "msg_fixture", "output_index": 1, "part": {"type": "output_text", "annotations": [], "logprobs": [], "text": "我先统计当前目录文件大小，再把分布表和图表写进 Excel。"}, "sequence_number": 115}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "item": {"id": "msg_fixture", "type": "message", "status": "completed", "content": [{"type": "output_text", "annotations": [], "logprobs": [], "text": "我先统计当前目录文件大小，再把分布表和图表写进 Excel。"}], "phase": "commentary", "role": "assistant"}, "output_index": 1, "sequence_number": 116}
+
+event: response.output_item.added
+data: {"type": "response.output_item.added", "item": {"id": "fc_fixture", "type": "function_call", "status": "in_progress", "arguments": "", "call_id": "call_fixture", "name": "list_skills"}, "output_index": 2, "sequence_number": 117}
+
+event: response.function_call_arguments.done
+data: {"type": "response.function_call_arguments.done", "arguments": "{\"limit\":8}", "item_id": "fc_fixture", "output_index": 2, "sequence_number": 119}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "item": {"id": "fc_fixture", "type": "function_call", "status": "completed", "arguments": "{\"limit\":8}", "call_id": "call_fixture", "name": "list_skills"}, "output_index": 2, "sequence_number": 120}
+
+event: response.output_item.added
+data: {"type": "response.output_item.added", "item": {"id": "fc_fixture", "type": "function_call", "status": "in_progress", "arguments": "", "call_id": "call_fixture", "name": "read_sheets_metadata"}, "output_index": 3, "sequence_number": 121}
+
+event: response.function_call_arguments.done
+data: {"type": "response.function_call_arguments.done", "arguments": "{\"summary\":\"检查工作簿结构\"}", "item_id": "fc_fixture", "output_index": 3, "sequence_number": 123}
+
+event: response.output_item.done
+data: {"type": "response.output_item.done", "item": {"id": "fc_fixture", "type": "function_call", "status": "completed", "arguments": "{\"summary\":\"检查工作簿结构\"}", "call_id": "call_fixture", "name": "read_sheets_metadata"}, "output_index": 3, "sequence_number": 124}
+
+event: response.completed
+data: {"type": "response.completed", "response": {"id": "resp_fixture", "object": "response", "created_at": 1790520762, "status": "completed", "access_programs": null, "background": false, "completed_at": 1790520766, "error": null, "frequency_penalty": 0.0, "incomplete_details": null, "max_output_tokens": null, "max_tool_calls": null, "model": "gpt-5.6-sol", "moderation": null, "output": [{"id": "rs_fixture", "type": "reasoning", "content": [], "summary": [{"type": "summary_text", "text": "**Planning file inspection**\n\nI need to inspect files and the workbook context using shell for the directory and spreadsheet tools for the workbook. It's essential to include a preamble in my commentary. I also think listing skills before making workbook edits could be beneficial, even for a simple task. The developer suggests using list_skills before starting relevant tasks, which makes sense. However, I’ll need to consider the limitations of tools and whether I can parallel them effectively."}]}, {"id": "msg_fixture", "type": "message", "status": "completed", "content": [{"type": "output_text", "annotations": [], "logprobs": [], "text": "我先统计当前目录文件大小，再把分布表和图表写进 Excel。"}], "phase": "commentary", "role": "assistant"}, {"id": "fc_fixture", "type": "function_call", "status": "completed", "arguments": "{\"limit\":8}", "call_id": "call_fixture", "name": "list_skills"}, {"id": "fc_fixture", "type": "function_call", "status": "completed", "arguments": "{\"summary\":\"检查工作簿结构\"}", "call_id": "call_fixture", "name": "read_sheets_metadata"}], "parallel_tool_calls": true, "presence_penalty": 0.0, "previous_response_id": null, "prompt_cache_key": "sess-redacted", "prompt_cache_retention": "24h", "reasoning": {"context": "all_turns", "effort": "medium", "mode": "standard", "summary": "detailed"}, "safety_identifier": "user-redacted", "service_tier": "priority", "store": false, "temperature": 1.0, "text": {"format": {"type": "text"}, "verbosity": "medium"}, "tool_choice": "auto", "tool_usage": {"image_gen": {"input_tokens": 0, "input_tokens_details": {"image_tokens": 0, "text_tokens": 0}, "output_tokens": 0, "output_tokens_details": {"image_tokens": 0, "text_tokens": 0}, "total_tokens": 0}, "web_search": {"num_requests": 0}}, "top_logprobs": 0, "top_p": 0.98, "truncation": "disabled", "usage": {"input_tokens": 31396, "input_tokens_details": {"cache_write_tokens": 233, "cached_tokens": 29812}, "output_tokens": 241, "output_tokens_details": {"reasoning_tokens": 158}, "total_tokens": 31637}, "user": null, "metadata": {"task_id": "33643e6f-7d82-59ba-83a6-d92e080a8ad1", "turn_id": "682f4675-8959-5a94-9a84-9a02eca6ce88", "agent_iteration": "1"}}, "sequence_number": 125}
+

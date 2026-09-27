@@ -9,8 +9,8 @@
   var refreshButton = document.getElementById("refresh-status");
 
   var NUMBER_FIELDS = ["response_header_timeout_seconds", "idle_conn_timeout_seconds", "max_idle_conns_per_host", "max_body_bytes", "tool_call_ttl_seconds", "max_image_bytes"];
-  var BOOLEAN_FIELDS = ["enable_http2", "use_account_proxy", "bps_enabled", "fallback_to_codex", "tool_relay", "image_support"];
-  var TEXT_FIELDS = ["model_suffix", "bps_user_agent"];
+  var BOOLEAN_FIELDS = ["enable_http2", "use_account_proxy", "bps_enabled", "fallback_to_codex", "tool_relay", "image_support", "trace_enabled", "trace_bodies"];
+  var TEXT_FIELDS = ["model_suffix", "bps_user_agent", "trace_dir"];
 
   var MODE_LABELS = { passthrough: "原样透传", basispoints_all: "basispoints（全部）", basispoints_suffix: "basispoints（按后缀）" };
   var REASON_LABELS = {
@@ -27,6 +27,13 @@
     plan_excluded: "套餐被排除（如免费号）",
     policy_cooldown: "账号被封，冷却中",
     usage_policy: "账号被 basispoints 封（usage policy）",
+    tool_call: "调用了工具",
+    text: "给出回答",
+    commentary_only: "只说要做、没调工具",
+    unknown_tool: "调了 Codex 没有的工具",
+    no_completed: "中途断开",
+    failed: "上游报失败",
+    non_sse: "非流式/错误体",
     tool_non_stream: "非流式带工具",
     image_upload_failed: "图片上传失败",
     model_access_changed: "模型无权限",
@@ -59,6 +66,10 @@
     });
     BOOLEAN_FIELDS.forEach(function (name) {
       if (config[name] !== undefined) form.elements[name].checked = Boolean(config[name]);
+    });
+    // 旧版本保存的配置里没有日志开关，插件按默认（开）处理；这里同样显示为开，免得一保存就关掉。
+    ["trace_enabled", "trace_bodies"].forEach(function (name) {
+      if (config[name] === undefined) form.elements[name].checked = true;
     });
     if (config.route_mode !== undefined) {
       Array.prototype.forEach.call(form.querySelectorAll('input[name="route_mode"]'), function (radio) {
@@ -154,6 +165,20 @@
     text("st-skips", formatCounts(snapshot.skip_reasons));
     text("st-fallbacks", formatCounts(snapshot.fallbacks));
     text("st-bps-status", formatCounts(snapshot.bps_status));
+    var trace = snapshot.trace;
+    text("st-outcomes", trace ? formatCounts(trace.outcomes) : undefined);
+    if (!trace) {
+      text("st-trace", undefined);
+    } else if (trace.error) {
+      text("st-trace", "打不开：" + trace.error);
+    } else if (!trace.enabled) {
+      text("st-trace", "已关闭");
+    } else {
+      var parts = ["已写 " + trace.written + " 条", "异常 " + trace.abnormal + " 条"];
+      if (trace.dropped) parts.push("丢弃 " + trace.dropped);
+      if (trace.errors) parts.push("写失败 " + trace.errors);
+      text("st-trace", parts.join("，") + "（" + trace.dir + "）");
+    }
   }
 
   function refreshStatus() {

@@ -61,6 +61,15 @@ basispoints 拒绝请求（模型无权限、请求体不兼容、被 Cloudflare
 - basispoints 返回 usage policy 403 时，这次请求自动改走 codex，该账号 24 小时内直接走 codex（插件重启清空）。
 - basispoints 自带的 `update_plan` 参数格式和 Codex 不同，插件在响应里转换、回放时转回，Codex 的计划能正常显示。
 
+排查日志（0.6.0 起，默认开）：sub2api 把插件的 stdout/stderr 丢弃，所以插件自己写文件到
+`<sub2api 数据目录>/bps-plugin-logs/`（生产即 `/opt/sub2api-deploy/data/bps-plugin-logs/`）：
+
+- `requests-YYYYMMDD.jsonl`：每个请求一行，含 request_id、账号、模型、会话、路由与原因、状态码、首包/总耗时、
+  **这一轮结局**（`tool_call` / `text` / `commentary_only` 只说要做没调工具 / `unknown_tool` 调了 Codex 没声明的工具 /
+  `no_completed` 中途断开 / `failed` / `error`）。
+- `bodies/YYYYMMDD/<request_id>.req.json|.resp.sse`：走 basispoints 的异常轮次和最近 200 个正常轮次的原文（不含令牌）。
+- 保留 7 天、总量 ≤ 1 GB。查某个客户：按时间和模型在 jsonl 里 grep，再按 request_id 打开原文。
+
 ## 构建
 
 需要 Go 1.25+。

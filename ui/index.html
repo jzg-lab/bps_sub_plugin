@@ -40,6 +40,8 @@
         <div><dt>未改写原因</dt><dd id="st-skips">—</dd></div>
         <div><dt>回落 codex 原因</dt><dd id="st-fallbacks">—</dd></div>
         <div><dt>basispoints 状态码</dt><dd id="st-bps-status">—</dd></div>
+        <div><dt>每轮结局</dt><dd id="st-outcomes">—</dd></div>
+        <div><dt>排查日志</dt><dd id="st-trace">—</dd></div>
       </dl>
     </section>
 
@@ -96,6 +98,18 @@
         <label class="field">
           <span>单张图片大小上限（字节，超过降级为文本）</span>
           <input type="number" name="max_image_bytes" min="1024" max="67108864" step="1" required>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="trace_enabled">
+          <span><strong>排查日志</strong>：每个请求记一行（走了哪、模型这一轮做了什么），保留 7 天、总量不超过 1 GB</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="trace_bodies">
+          <span><strong>保存对话原文</strong>：异常轮次（只说不做、调了不存在的工具、中途断开、报错、回落）和最近 200 个正常轮次，另存请求和响应原文（不含令牌）</span>
+        </label>
+        <label class="field wide">
+          <span>日志目录（留空 = 自动：sub2api 数据目录下的 bps-plugin-logs）</span>
+          <input type="text" name="trace_dir" spellcheck="false" placeholder="/app/data/bps-plugin-logs">
         </label>
         <label class="field wide">
           <span>basispoints User-Agent</span>

@@ -109,3 +109,39 @@ func TestInitHostServicesWithoutBroker(t *testing.T) {
 		t.Fatalf("init without broker = %+v, %v", response, err)
 	}
 }
+
+func TestDefaultTraceDir(t *testing.T) {
+	cases := map[string]string{
+		"/app/data/plugins/installed/io.x/0.6.0-abc/runtimes/linux-amd64/plugin": "/app/data/bps-plugin-logs",
+		"/opt/x/plugin": "/opt/x/bps-plugin-logs",
+	}
+	for executable, want := range cases {
+		if got := defaultTraceDir(executable); got != want {
+			t.Errorf("defaultTraceDir(%q) = %q, want %q", executable, got, want)
+		}
+	}
+}
+
+func TestApplyConfigSwitchesTrace(t *testing.T) {
+	server := New()
+	dir := t.TempDir()
+	apply := func(raw string) {
+		t.Helper()
+		response, err := server.ApplyConfig(context.Background(), &pluginv1.ApplyConfigRequest{ConfigJson: []byte(raw)})
+		if err != nil || !response.Applied {
+			t.Fatalf("apply %s: %v %+v", raw, err, response)
+		}
+	}
+	apply(`{"trace_dir":"` + dir + `"}`)
+	if status := server.traceStatus(); !status.Enabled || status.Dir != dir {
+		t.Fatalf("status=%+v", status)
+	}
+	apply(`{"trace_enabled":false,"trace_dir":"` + dir + `"}`)
+	if status := server.traceStatus(); status.Enabled {
+		t.Fatalf("trace must be off: %+v", status)
+	}
+	apply(`{"trace_dir":"/proc/forbidden/x"}`)
+	if status := server.traceStatus(); status.Enabled || status.Error == "" {
+		t.Fatalf("unwritable dir must report an error: %+v", status)
+	}
+}

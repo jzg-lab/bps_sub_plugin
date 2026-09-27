@@ -14,6 +14,7 @@ import (
 
 	"github.com/jzg-lab/bps_sub_plugin/internal/basispoints"
 	"github.com/jzg-lab/bps_sub_plugin/internal/config"
+	"github.com/jzg-lab/bps_sub_plugin/internal/tracelog"
 )
 
 // 回落原因码，出现在状态统计里。
@@ -43,12 +44,15 @@ func isResponsesCandidate(request *http.Request) bool {
 // forwardResponses 处理一个可能改走 basispoints 的 Responses 请求。
 // 请求体需要完整读入内存：既要解析做路由判定，回落 codex 时也要重发原始请求体。
 func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transport http.RoundTripper, cfg config.Config, request *http.Request, body io.Reader, contentLength int64) error {
+	trace := traceOf(stream)
 	buffered, err := io.ReadAll(io.LimitReader(body, cfg.MaxBodyBytes+1))
 	if err != nil {
 		return f.fail(stream, codeRequestBody, err.Error(), false)
 	}
+	trace.noteRequest(request.Header, buffered)
 	if int64(len(buffered)) > cfg.MaxBodyBytes {
 		// 太大不改写：已读的前缀接上剩余部分，原样流式发往 codex。
+		trace.codex(basispoints.ReasonBodyTooLarge, nil)
 		f.Stats.SkipReasons.Add(basispoints.ReasonBodyTooLarge)
 		f.Stats.RoutedCodex.Add(1)
 		setStreamingBody(request, io.MultiReader(bytes.NewReader(buffered), body), contentLength)
@@ -58,11 +62,13 @@ func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transpo
 	decision := basispoints.Decide(cfg, request.Header, buffered)
 	if !decision.Route {
 		f.Stats.SkipReasons.Add(decision.Reason)
+		trace.codex(decision.Reason, buffered)
 		return f.sendCodex(ctx, stream, transport, request, buffered, false)
 	}
 	chatgptAccount := strings.TrimSpace(request.Header.Get("Chatgpt-Account-Id"))
 	if f.Stats.PolicyCooldown.Active(chatgptAccount) {
 		f.Stats.SkipReasons.Add(reasonPolicyCooldown)
+		trace.codex(reasonPolicyCooldown, buffered)
 		return f.sendCodex(ctx, stream, transport, request, buffered, false)
 	}
 
@@ -70,6 +76,7 @@ func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transpo
 		if allFailed := f.uploadImages(ctx, transport, request.Header, cfg, decision.Body); allFailed && cfg.FallbackToCodex {
 			// 全部图片都传不上去：带图片走原生 codex 更稳。
 			f.Stats.Fallbacks.Add(fallbackImageUpload)
+			trace.codex(fallbackImageUpload, buffered)
 			return f.sendCodex(ctx, stream, transport, request, buffered, false)
 		}
 	}
@@ -77,7 +84,12 @@ func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transpo
 	bpsBody, err := basispoints.BuildBody(decision, f.replayer)
 	if err != nil {
 		f.Stats.Fallbacks.Add(fallbackRewrite)
+		trace.codex(fallbackRewrite, buffered)
 		return f.sendCodex(ctx, stream, transport, request, buffered, false)
+	}
+	if trace != nil {
+		trace.route, trace.request, trace.nativeTools = "bps", bpsBody, decision.NativeTools
+		trace.declared = tracelog.DeclaredTools(decision.Body)
 	}
 	wantStream := true
 	if value, ok := decision.Body["stream"].(bool); ok {
@@ -86,6 +98,7 @@ func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transpo
 	bpsRequest, err := newBPSRequest(ctx, request.Header, bpsBody, cfg.BPSUserAgent, wantStream)
 	if err != nil {
 		f.Stats.Fallbacks.Add(fallbackRewrite)
+		trace.codex(fallbackRewrite, buffered)
 		return f.sendCodex(ctx, stream, transport, request, buffered, false)
 	}
 
@@ -98,6 +111,8 @@ func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transpo
 		}
 		if cfg.FallbackToCodex {
 			f.Stats.Fallbacks.Add(fallbackConnect)
+			trace.codex(fallbackConnect, buffered)
+			trace.noteUpstreamError(err.Error())
 			// 请求头已写出时 basispoints 可能已开始处理，回落后的最终失败也不能让宿主重放。
 			return f.sendCodex(ctx, stream, transport, request, buffered, sent)
 		}
@@ -111,6 +126,8 @@ func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transpo
 		if reason := fallbackReason(response, peeked); reason != "" {
 			_ = response.Body.Close()
 			f.Stats.Fallbacks.Add(reason)
+			trace.codex(reason, buffered)
+			trace.noteUpstreamError(strconv.Itoa(response.StatusCode) + " " + string(peeked))
 			if reason == fallbackUsagePolicy {
 				f.Stats.PolicyCooldown.Add(chatgptAccount, policyCooldown)
 			}

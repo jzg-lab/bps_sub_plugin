@@ -72,6 +72,13 @@ type Config struct {
 	// ExcludePlanTypes 是不走 basispoints 的 ChatGPT 套餐（取自 access token 的 chatgpt_plan_type）。
 	// 免费号走 basispoints 会被 usage policy 封号，默认排除。
 	ExcludePlanTypes []string `json:"exclude_plan_types"`
+
+	// TraceEnabled 为 true 时每个请求写一行排查日志（宿主丢弃插件的 stdout/stderr，只能自己写文件）。
+	TraceEnabled bool `json:"trace_enabled"`
+	// TraceBodies 为 true 时异常轮次（和最近 200 个正常轮次）另存请求体和响应原文。
+	TraceBodies bool `json:"trace_bodies"`
+	// TraceDir 是日志目录；空表示自动（sub2api 数据目录下的 bps-plugin-logs）。
+	TraceDir string `json:"trace_dir"`
 }
 
 // Default 返回默认配置。
@@ -99,6 +106,9 @@ func Default() Config {
 
 		AccountIDs:       []int64{},
 		ExcludePlanTypes: []string{"free"},
+
+		TraceEnabled: true,
+		TraceBodies:  true,
 	}
 }
 
@@ -131,6 +141,7 @@ func (c *Config) normalize() {
 	c.RouteMode = strings.ToLower(strings.TrimSpace(c.RouteMode))
 	c.ModelSuffix = strings.TrimSpace(c.ModelSuffix)
 	c.BPSUserAgent = strings.TrimSpace(c.BPSUserAgent)
+	c.TraceDir = strings.TrimSpace(c.TraceDir)
 	seen := make(map[string]bool, len(c.Models))
 	models := make([]string, 0, len(c.Models))
 	for _, model := range c.Models {
@@ -215,6 +226,9 @@ func (c Config) Validate() error {
 		if id <= 0 {
 			return fmt.Errorf("账号 ID 无效: %d", id)
 		}
+	}
+	if len(c.TraceDir) > 512 || strings.ContainsAny(c.TraceDir, "\r\n") || (c.TraceDir != "" && !strings.HasPrefix(c.TraceDir, "/")) {
+		return errors.New("trace_dir 必须是绝对路径、不超过 512 个字符")
 	}
 	if len(c.ExcludePlanTypes) > 32 {
 		return errors.New("exclude_plan_types 最多 32 个")

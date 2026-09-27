@@ -32,6 +32,11 @@ type Server struct {
 	mu     sync.Mutex
 	broker *hcplugin.GRPCBroker
 	host   pluginv1.HostServiceClient
+
+	// 排查日志的当前设置（受 mu 保护）。
+	traceApplied bool
+	traceCurrent traceSettings
+	traceError   string
 }
 
 // New 创建使用默认配置的插件服务。宿主启用插件后会通过 ApplyConfig 下发已保存配置。
@@ -43,13 +48,16 @@ func New() *Server {
 	forwarder := &transport.Forwarder{Pool: pool, Stats: stats}
 	forwarder.SetToolStore(store)
 	forwarder.SetImageCache(256)
-	return &Server{
+	server := &Server{
 		pool:      pool,
 		stats:     stats,
 		forwarder: forwarder,
 		store:     store,
 		startedAt: time.Now(),
 	}
+	// 宿主启用后会立刻 ApplyConfig；在那之前按默认配置先把日志开起来。
+	server.applyTrace(cfg)
+	return server
 }
 
 func (s *Server) GetInfo(context.Context, *pluginv1.GetInfoRequest) (*pluginv1.GetInfoResponse, error) {
@@ -80,11 +88,12 @@ type status struct {
 	Fallbacks   map[string]int64 `json:"fallbacks"`
 	BPSStatus   map[string]int64 `json:"bps_status"`
 
-	ToolRelayed      int64 `json:"tool_relayed"`
-	ToolDecodeFailed int64 `json:"tool_decode_failed"`
-	NativeTools      int64 `json:"native_tools"`
-	PolicyCooldown   int   `json:"policy_cooldown_accounts"`
-	KVErrors         int64 `json:"kv_errors"`
+	ToolRelayed      int64       `json:"tool_relayed"`
+	ToolDecodeFailed int64       `json:"tool_decode_failed"`
+	NativeTools      int64       `json:"native_tools"`
+	PolicyCooldown   int         `json:"policy_cooldown_accounts"`
+	Trace            traceStatus `json:"trace"`
+	KVErrors         int64       `json:"kv_errors"`
 
 	ImagesUploaded    int64 `json:"images_uploaded"`
 	ImagesReused      int64 `json:"images_reused"`
@@ -120,6 +129,7 @@ func (s *Server) Health(context.Context, *pluginv1.HealthRequest) (*pluginv1.Hea
 		ToolDecodeFailed:  s.stats.ToolDecodeFailed.Load(),
 		NativeTools:       s.stats.NativeTools.Load(),
 		PolicyCooldown:    s.stats.PolicyCooldown.Len(),
+		Trace:             s.traceStatus(),
 		KVErrors:          s.stats.KVErrors.Load(),
 		ImagesUploaded:    s.stats.ImagesUploaded.Load(),
 		ImagesReused:      s.stats.ImagesReused.Load(),
@@ -144,6 +154,7 @@ func (s *Server) ApplyConfig(_ context.Context, request *pluginv1.ApplyConfigReq
 	}
 	s.pool.Apply(cfg)
 	s.store.SetTTL(time.Duration(cfg.ToolCallTTLSeconds) * time.Second)
+	s.applyTrace(cfg)
 	return &pluginv1.ApplyConfigResponse{Applied: true}, nil
 }
 

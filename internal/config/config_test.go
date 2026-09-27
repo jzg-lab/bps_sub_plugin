@@ -111,7 +111,7 @@ func TestJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(want.JSON(), &fields); err != nil {
 		t.Fatal(err)
 	}
-	if len(fields) != 18 {
+	if len(fields) != 21 {
 		t.Fatalf("normalized JSON must contain every field, got %d: %v", len(fields), fields)
 	}
 	if strings.Contains(string(want.JSON()), `<`) {
