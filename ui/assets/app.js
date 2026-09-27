@@ -158,8 +158,11 @@
     bridge.resize(document.documentElement.scrollHeight + 16);
   }
 
-  form.addEventListener("submit", function (event) {
-    event.preventDefault();
+  // 宿主用 sandbox="allow-scripts"（没有 allow-forms）加载配置页，表单提交会被浏览器直接丢弃，
+  // submit 事件都不会触发。所以保存走按钮 click，并拦住回车提交。
+  form.addEventListener("submit", function (event) { event.preventDefault(); });
+
+  saveButton.addEventListener("click", function () {
     var config;
     try {
       config = readForm();

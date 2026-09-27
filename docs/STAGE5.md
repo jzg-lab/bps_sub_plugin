@@ -83,3 +83,8 @@
   `503 overloaded`（已恢复，原生账号同样有），与插件无关。
   **basispoints 尚未打开**，由用户在配置页填账号、勾选启用。
 - **2026-09-27 P7 ✅**：README 写生产使用说明；提交推送。
+- **2026-09-27 0.5.1 修复：配置页保存没反应**。宿主用 `<iframe sandbox="allow-scripts">`（没有 `allow-forms`）
+  加载配置页，浏览器直接丢弃表单提交，Chromium 报 "Blocked form submission … 'allow-forms' permission is not set"，
+  `submit` 事件都不触发（阶段 2~4 用 jsdom 验证，没有 sandbox，所以没发现）。改成保存按钮 `type=button` + click 处理，
+  并拦截回车提交。验证：headless Chromium 在 sandbox iframe 里复现旧版 0 次保存、新版保存成功；测试环境真实后台
+  （0.5.1 签名包）点保存 →「已保存」，服务端 `account_ids` 已写入。包放在本地 `release/0.5.1/`，由用户上传到生产。
