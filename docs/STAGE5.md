@@ -88,3 +88,62 @@
   `submit` 事件都不触发（阶段 2~4 用 jsdom 验证，没有 sandbox，所以没发现）。改成保存按钮 `type=button` + click 处理，
   并拦截回车提交。验证：headless Chromium 在 sandbox iframe 里复现旧版 0 次保存、新版保存成功；测试环境真实后台
   （0.5.1 签名包）点保存 →「已保存」，服务端 `account_ids` 已写入。包放在本地 `release/0.5.1/`，由用户上传到生产。
+
+## 6. 0.5.2 修复：新版 Codex 用着用着中断
+
+### 6.1 现象与根因（2026-09-27 实测）
+
+客户反馈：模型说「我先读取文件」然后这一轮就结束了，没有执行任何工具。
+
+- 新版 Codex（本机 0.148，生产上 0.146~0.158 都有）**不再发顶层 `tools`**，工具放在 `input` 里的
+  `{"type":"additional_tools","role":"developer","tools":[{"type":"namespace","name":"functions","tools":[exec, wait, …]}, …]}`。
+  抓包：本机 codex exec 指向本地假服务器，请求体没有 `tools` 键。
+- 插件 `ParseTools` 只看顶层 `tools` → 目录为空 → 当成无工具对话：原样把 `additional_tools` 透传，
+  再加一句 `ExternalClientInstructions`（"Return the answer as assistant text"）。
+- **basispoints 本身认识 `additional_tools`**：用生产账号直发插件生成的请求体，模型返回原生
+  `custom_tool_call name=exec`（input 是 `tools.exec_command(...)` 的 JS，正是 Codex 声明的工具）。
+- 第一轮走无工具路径（`relay` 直接透传），调用能到 Codex；第二轮起历史里有 `custom_tool_call`，
+  `hasToolHistory` 命中 → 走 `relayToolStream`：它**扣留**所有原生工具事件，completed 时用（空的）catalog
+  还原失败 → 工具调用被丢掉，只剩 commentary「我先读取…」→ Codex 认为这一轮结束。这就是「中断」。
+  用抓到的真实 basispoints SSE 跑当前变换确认：输出里只剩 reasoning + completed。
+  （顺带：历史回放把 `exec` 调用 fallback 包成 `run_officejs`，basispoints 也照样接受并继续调用 exec。）
+- 把 basispoints 的原生 SSE（`custom_tool_call name=exec`，无 namespace）原样喂给本机 Codex CLI：
+  Codex 直接执行 exec、下一轮原样回放 `custom_tool_call` + `custom_tool_call_output`，basispoints 也接受
+  （生产账号实测第二轮 200，继续调用 exec）。**所以 `additional_tools` 请求应当整条原样透传，不做中转。**
+- 另：`403 This request was blocked by our usage policy` 在同一账号上对任何请求（含最简单的 pong）都返回，
+  是账号级封禁，与请求内容无关；目前插件不回落，直接把 403 给宿主（宿主按 403 计数、标 error）。
+
+### 6.2 设计
+
+- `Decide`：input 里有 `additional_tools` 项 → `Decision.NativeTools=true`，**不走工具中转**
+  （`HasToolContext=false`），响应用 `relay` 原样透传。
+- `BuildBody`：`NativeTools` 时不加 `ExternalClientInstructions`（它叫模型只回文本，和工具冲突）；
+  `translateInput` 对 `function_call`/`custom_tool_call` 历史原样保留，不回放成 run_officejs。
+  `additional_tools` 项原样保留（上游认识）。
+- 状态统计加 `native_tools`（走原生工具路径的请求数），配置页显示「原生工具请求」。
+- `tool_relay` 关闭时 additional_tools 请求也走 codex（原因码 `has_tools`），和顶层 tools 一致。
+- usage policy 403：不改（回落到 codex 同一账号大概率也被拦；让宿主正常处理账号状态）。
+
+### 6.3 执行清单
+
+- [x] **N1 代码**：route.go / rewrite.go / 统计 + 配置页；单测（用抓到的 Codex 请求结构）。
+- [x] **N2 端到端**：本机 Codex CLI → 本地假上游（回放真实 basispoints SSE）经插件变换，确认工具调用到达 Codex；
+      生产账号直发新 BuildBody 生成的两轮请求体，确认 200 且返回原生工具调用。
+- [x] **N3 打包**：版本 0.5.2，签名包放 `release/0.5.2/`，由用户上传。
+- [x] **N4 收尾**：README/本文记录；提交推送。
+
+### 6.4 执行记录
+
+- **2026-09-27 调研**：见 6.1。
+- **2026-09-27 N1 ✅**：`Decision.NativeTools`（input 有非空 additional_tools 且没有顶层 tools）；
+  `BuildBody` 此时不注入 catalog/`ExternalClientInstructions`，`translateInput` 原样保留工具调用和结果；
+  响应走 `relay` 原样透传；统计 `native_tools` + 配置页。单测：原生透传、tool_relay 开关、空 additional_tools；
+  transport 测试 `TestAdditionalToolsCallReachesHost`（旧代码下失败：工具调用被扣留，只剩 created/completed）。
+- **2026-09-27 N2 ✅**：
+  - 本机 Codex CLI 0.148 → 本地 harness（插件 Forwarder）→ 假上游回放两段真实 basispoints SSE：
+    **新代码**：exec 执行 2 次后收到 DONE，3 轮请求；**旧代码**：exec 执行 1 次后停在
+    「目录里有一个 TeX 主文件…我继续展开读取。」，只有 2 轮请求——正是客户截图里的现象。
+  - 生产账号直发新代码对 Codex 真实第二轮请求生成的请求体：12789 / 12536 / 12783 都 200，
+    模型读到工具结果给出最终答案。12432、12609 对任何请求（含 pong）都 403 usage policy，是账号级封禁。
+- **2026-09-27 N3 ✅**：0.5.2 签名包 sha256 `21d36f48…`，放在 `release/0.5.2/`；测试环境签名包升级 → healthy。
+- **2026-09-27 N4 ✅**：README、本文；提交推送。由用户上传生产（停用 → 上传 → 启用，配置保留）。

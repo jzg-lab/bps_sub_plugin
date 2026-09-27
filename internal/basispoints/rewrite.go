@@ -74,13 +74,16 @@ func BuildBody(decision Decision, replayer Replayer) ([]byte, error) {
 		catalog = &ToolCatalog{}
 	}
 	parallel := source["parallel_tool_calls"] != false
-	history := translateInput(rawInput, catalog, replayer)
+	history := translateInput(rawInput, catalog, replayer, decision.NativeTools)
 
 	input := make([]any, 0, len(history)+3)
 	if instructions, ok := source["instructions"].(string); ok && strings.TrimSpace(instructions) != "" {
 		input = append(input, messageItem("developer", instructions))
 	}
-	input = append(input, BuildToolCatalogMessages(catalog, parallel)...)
+	if !decision.NativeTools {
+		// 原生工具时不加：ExternalClientInstructions 叫模型只回文本，会压住工具调用。
+		input = append(input, BuildToolCatalogMessages(catalog, parallel)...)
+	}
 	input = append(input, history...)
 
 	stream := true
@@ -156,8 +159,9 @@ func messageItem(role, text string) map[string]any {
 //   - 去掉 Codex 私有的 internal_chat_message_metadata_passthrough；
 //   - reasoning 只保留带 encrypted_content 的（store=false 时上游拒收裸 reasoning）；
 //   - 丢掉 item_reference（store=false 时上游无从解析）；
-//   - 工具调用/结果回放成上游认识的形态（catalog 非空时）。
-func translateInput(raw any, catalog *ToolCatalog, replayer Replayer) []any {
+//   - 工具调用/结果回放成上游认识的形态（catalog 非空时）；native 为 true（additional_tools）时
+//     调用本来就是上游发出的原生调用，原样保留。
+func translateInput(raw any, catalog *ToolCatalog, replayer Replayer, native bool) []any {
 	if text, ok := raw.(string); ok {
 		return []any{messageItem("user", text)}
 	}
@@ -192,10 +196,14 @@ func translateInput(raw any, catalog *ToolCatalog, replayer Replayer) []any {
 				})
 			}
 		case "item_reference":
-		case "function_call", "custom_tool_call":
-			result = append(result, replayToolCall(item, catalog, replayer, callOrigins))
-		case "function_call_output", "custom_tool_call_output":
-			result = append(result, normalizedToolOutput(item, callOrigins))
+		case "function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output":
+			if native {
+				result = append(result, item)
+			} else if kind == "function_call" || kind == "custom_tool_call" {
+				result = append(result, replayToolCall(item, catalog, replayer, callOrigins))
+			} else {
+				result = append(result, normalizedToolOutput(item, callOrigins))
+			}
 		default:
 			result = append(result, item)
 		}

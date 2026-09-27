@@ -271,3 +271,46 @@ func TestToolStreamErrorResponseFallsBackToCodex(t *testing.T) {
 		t.Fatalf("expected codex fallback for tool request: body=%q codex=%d", body, u.codexHits.Load())
 	}
 }
+
+// 新版 Codex：工具在 input 的 additional_tools 里，历史里已有上游原生的 custom_tool_call。
+const additionalToolsBody = `{"model":"gpt-5.6-sol","stream":true,"input":[
+	{"type":"additional_tools","role":"developer","tools":[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}]},
+	{"type":"message","role":"user","content":"读一下当前目录的文件"},
+	{"type":"custom_tool_call","id":"ctc_0","call_id":"call_0","name":"exec","input":"text(0)","status":"completed"},
+	{"type":"custom_tool_call_output","call_id":"call_0","output":"a.txt"}]}`
+
+// TestAdditionalToolsCallReachesHost 复现「用着用着中断」：旧版在第二轮把上游的原生 exec 调用
+// 当成解不出的中转调用扣留掉，Codex 只收到 commentary 就结束了这一轮。
+func TestAdditionalToolsCallReachesHost(t *testing.T) {
+	call := map[string]any{"type": "custom_tool_call", "id": "ctc_1", "call_id": "call_1", "name": "exec", "input": "text(1)", "status": "completed"}
+	upstream := sse("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": "resp_1", "output": []any{}}}) +
+		sse("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "custom_tool_call", "id": "ctc_1", "call_id": "call_1", "name": "exec", "input": "", "status": "in_progress"}}) +
+		sse("response.custom_tool_call_input.delta", map[string]any{"type": "response.custom_tool_call_input.delta", "output_index": 0, "item_id": "ctc_1", "delta": "text(1)"}) +
+		sse("response.custom_tool_call_input.done", map[string]any{"type": "response.custom_tool_call_input.done", "output_index": 0, "item_id": "ctc_1", "input": "text(1)"}) +
+		sse("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": 0, "item": call}) +
+		sse("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"id": "resp_1", "status": "completed", "output": []any{call}}})
+	u := toolUpstreams(t, upstream)
+	forwarder := toolForwarder(t, u, newMemStore())
+	stream := toolStream(additionalToolsBody)
+	if err := forwarder.Forward(stream); err != nil {
+		t.Fatal(err)
+	}
+	start, body, _, frameErr := collect(t, stream.frames())
+	if frameErr != nil || start.StatusCode != 200 {
+		t.Fatalf("start=%+v err=%+v", start, frameErr)
+	}
+	if body != upstream {
+		t.Fatalf("native tool stream must reach the host unchanged:\n%s", body)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(u.lastBPSBody.Load().(string)), &sent); err != nil {
+		t.Fatal(err)
+	}
+	history, _ := json.Marshal(sent["input"])
+	if strings.Contains(string(history), "run_officejs") || !strings.Contains(string(history), `"name":"exec"`) {
+		t.Fatalf("history must replay the native call verbatim: %s", history)
+	}
+	if forwarder.Stats.NativeTools.Load() != 1 || forwarder.Stats.ToolDecodeFailed.Load() != 0 {
+		t.Fatalf("stats native=%d decode_failed=%d", forwarder.Stats.NativeTools.Load(), forwarder.Stats.ToolDecodeFailed.Load())
+	}
+}

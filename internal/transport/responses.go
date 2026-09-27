@@ -107,6 +107,9 @@ func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transpo
 		response.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(peeked), response.Body), Closer: response.Body}
 	}
 	f.Stats.RoutedBPS.Add(1)
+	if decision.NativeTools {
+		f.Stats.NativeTools.Add(1)
+	}
 	if decision.HasToolContext {
 		return f.relayToolStream(stream, response, started, decision)
 	}

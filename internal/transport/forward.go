@@ -58,6 +58,7 @@ type Stats struct {
 	ToolFallbackRebuilt atomic.Int64 // KV 没命中、fallback 重建的次数
 	ToolDecodeFailed    atomic.Int64 // run_officejs 内层 JSON 解不出
 	KVErrors            atomic.Int64 // KV 读写出错
+	NativeTools         atomic.Int64 // additional_tools 请求，工具原样透传的次数
 
 	ImagesUploaded    atomic.Int64 // 成功上传的图片数
 	ImagesReused      atomic.Int64 // 命中上传缓存的图片数

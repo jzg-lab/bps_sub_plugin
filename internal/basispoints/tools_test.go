@@ -196,3 +196,55 @@ func TestFunctionItemIDLength(t *testing.T) {
 		t.Fatalf("long id not clamped: %s (%d)", long, len(long))
 	}
 }
+
+// codexAdditionalToolsBody 是新版 Codex 的请求形态：没有顶层 tools，工具声明在 input 的
+// additional_tools 里；第二轮起历史里是上游原生的 custom_tool_call（结构取自 2026-09-27 抓包）。
+const codexAdditionalToolsBody = `{"model":"gpt-5.6-sol","stream":true,"tool_choice":"auto","parallel_tool_calls":false,
+	"input":[
+		{"type":"additional_tools","role":"developer","tools":[{"type":"namespace","name":"functions","description":"","tools":[
+			{"type":"custom","name":"exec","description":"Run JavaScript","format":{"type":"grammar","syntax":"lark","definition":"start: SOURCE"}},
+			{"type":"function","name":"wait","parameters":{"type":"object","properties":{"cell_id":{"type":"string"}}}}]}]},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"读一下当前目录的文件"}]},
+		{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"ENC"},
+		{"type":"custom_tool_call","id":"ctc_1","status":"completed","call_id":"call_1","name":"exec","input":"text(1)"},
+		{"type":"custom_tool_call_output","id":"ctco_1","call_id":"call_1","output":[{"type":"input_text","text":"hello\n"}]}]}`
+
+func TestAdditionalToolsPassThroughNatively(t *testing.T) {
+	decision := Decide(enabledConfig(), identityHeader(), []byte(codexAdditionalToolsBody))
+	if !decision.Route || !decision.NativeTools || decision.HasToolContext {
+		t.Fatalf("route=%v native=%v toolctx=%v reason=%q", decision.Route, decision.NativeTools, decision.HasToolContext, decision.Reason)
+	}
+	out := build(t, codexAdditionalToolsBody)
+	input := out["input"].([]any)
+	if len(input) != 5 {
+		t.Fatalf("input = %v", input)
+	}
+	if kind := input[0].(map[string]any)["type"]; kind != "additional_tools" {
+		t.Fatalf("additional_tools must stay first (no injected instructions): %v", input[0])
+	}
+	raw, _ := json.Marshal(input)
+	if strings.Contains(string(raw), "run_officejs") || strings.Contains(string(raw), "Return the answer as assistant text") {
+		t.Fatalf("native tools must not be wrapped or suppressed: %s", raw)
+	}
+	call := input[3].(map[string]any)
+	if call["type"] != "custom_tool_call" || call["name"] != "exec" || call["id"] != "ctc_1" || call["input"] != "text(1)" {
+		t.Fatalf("native call not kept verbatim: %v", call)
+	}
+	if output := input[4].(map[string]any); output["type"] != "custom_tool_call_output" || output["id"] != "ctco_1" {
+		t.Fatalf("native output not kept verbatim: %v", output)
+	}
+}
+
+func TestAdditionalToolsRespectsToolRelaySwitch(t *testing.T) {
+	decision := Decide(relayOffConfig(), identityHeader(), []byte(codexAdditionalToolsBody))
+	if decision.Route || decision.Reason != ReasonHasTools {
+		t.Fatalf("route=%v reason=%q", decision.Route, decision.Reason)
+	}
+}
+
+func TestEmptyAdditionalToolsIsNotNative(t *testing.T) {
+	decision := Decide(enabledConfig(), identityHeader(), []byte(`{"model":"gpt-5.6-sol","input":[{"type":"additional_tools","tools":[]},{"type":"message","role":"user","content":"hi"}]}`))
+	if !decision.Route || decision.NativeTools {
+		t.Fatalf("route=%v native=%v", decision.Route, decision.NativeTools)
+	}
+}

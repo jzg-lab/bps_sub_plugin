@@ -54,6 +54,9 @@ type Decision struct {
 	Stream bool
 	// HasToolContext 表示这轮带工具或历史里有工具调用，走工具中转路径。
 	HasToolContext bool
+	// NativeTools 表示工具声明在 input 的 additional_tools 里（新版 Codex）。basispoints
+	// 直接认识这种声明，工具调用和历史都原样透传，不走 run_officejs 中转。
+	NativeTools bool
 	// HasImages 表示 input 里有可上传的内联图片。
 	HasImages bool
 }
@@ -81,10 +84,11 @@ func Decide(cfg config.Config, header http.Header, body []byte) Decision {
 	}
 
 	catalog := ParseTools(parsed)
-	hasToolContext := !catalog.Empty() || hasToolHistory(parsed["input"])
+	nativeTools := catalog.Empty() && hasAdditionalTools(parsed["input"])
+	hasToolContext := !catalog.Empty() || nativeTools || hasToolHistory(parsed["input"])
 	if hasToolContext && !cfg.ToolRelay {
 		// 工具中转关闭：带工具的请求回到阶段 2 行为，走 codex。
-		if !catalog.Empty() {
+		if !catalog.Empty() || nativeTools {
 			return Decision{Reason: ReasonHasTools}
 		}
 		return Decision{Reason: ReasonHasToolHistory}
@@ -115,7 +119,31 @@ func Decide(cfg config.Config, header http.Header, body []byte) Decision {
 	if strings.TrimSpace(header.Get("Chatgpt-Account-Id")) == "" {
 		return Decision{Reason: ReasonNoAccountID}
 	}
+	if nativeTools {
+		// 原生工具：响应里的调用就是客户端声明的工具，不需要 SSE 还原。
+		return Decision{Route: true, Model: model, Body: parsed, Catalog: catalog, Stream: stream, NativeTools: true, HasImages: images}
+	}
 	return Decision{Route: true, Model: model, Body: parsed, Catalog: catalog, Stream: stream, HasToolContext: hasToolContext, HasImages: images}
+}
+
+// hasAdditionalTools 判断 input 里有没有 additional_tools 工具声明（新版 Codex 不再发顶层 tools）。
+func hasAdditionalTools(input any) bool {
+	items, ok := input.([]any)
+	if !ok {
+		return false
+	}
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if kind, _ := item["type"].(string); kind == "additional_tools" {
+			if tools, ok := item["tools"].([]any); ok && len(tools) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // parseObject 解析 JSON 对象，数字保留原样（json.Number），避免大整数失真。

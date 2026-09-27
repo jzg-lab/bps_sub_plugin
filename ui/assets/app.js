@@ -133,6 +133,7 @@
     text("st-routed-bps", snapshot.routed_bps);
     text("st-routed-codex", snapshot.routed_codex);
     text("st-tool-relayed", snapshot.tool_relayed);
+    text("st-native-tools", snapshot.native_tools);
     var uploaded = snapshot.images_uploaded;
     if (uploaded !== undefined) {
       var extra = [];
