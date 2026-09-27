@@ -27,6 +27,7 @@ type traceInfo struct {
 	plan        string
 	chatgpt     string
 	upstreamErr string
+	nudge       bool // 本轮用户消息是"继续 / ？？？"之类
 }
 
 // recordingStream 包住宿主的流：把发回宿主的帧原样转发，同时记下状态码、首包时间和响应字节。
@@ -85,12 +86,20 @@ func (t *traceInfo) noteRequest(header http.Header, body []byte) {
 		return
 	}
 	var head struct {
-		Model          string `json:"model"`
-		PromptCacheKey string `json:"prompt_cache_key"`
+		Model          string         `json:"model"`
+		PromptCacheKey string         `json:"prompt_cache_key"`
+		ClientMetadata map[string]any `json:"client_metadata"`
 	}
 	_ = json.Unmarshal(body, &head)
 	t.model = head.Model
 	t.session = head.PromptCacheKey
+	if t.session == "" {
+		t.session, _ = head.ClientMetadata["session_id"].(string)
+	}
+	var parsed map[string]any
+	if json.Unmarshal(body, &parsed) == nil {
+		t.nudge = tracelog.IsNudge(tracelog.LastUserText(parsed))
+	}
 	t.plan = basispoints.PlanType(header)
 	if account := strings.TrimSpace(header.Get("Chatgpt-Account-Id")); len(account) > 8 {
 		t.chatgpt = account[:8]
@@ -153,6 +162,7 @@ func (f *Forwarder) finishTrace(recorder *recordingStream, requestID string, acc
 		UnknownTools:   result.UnknownTools,
 		Text:           result.Text,
 		UpstreamError:  firstNonEmpty(info.upstreamErr, result.Error),
+		Nudge:          info.nudge,
 		Cancelled:      cancelled,
 		Truncated:      recorder.truncated,
 	}
@@ -172,7 +182,7 @@ func (f *Forwarder) finishTrace(recorder *recordingStream, requestID string, acc
 		abnormal = false
 	}
 	f.Stats.Outcomes.Add(entry.Outcome)
-	record := tracelog.Record{Entry: entry, Abnormal: abnormal}
+	record := tracelog.Record{Entry: entry, Abnormal: abnormal || info.nudge}
 	// 只给走了 basispoints（含回落）的请求存原文：直接发 codex 的和插件无关，Codex 请求体又带着整段历史，
 	// 磁盘吃不消。它们仍然有摘要行，可以拿来和 basispoints 的结局对比。
 	if entry.Route == "bps" || isFallback(info.reason) {

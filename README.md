@@ -68,7 +68,8 @@ basispoints 拒绝请求（模型无权限、请求体不兼容、被 Cloudflare
   **这一轮结局**（`tool_call` / `text` / `commentary_only` 只说要做没调工具 / `unknown_tool` 调了 Codex 没声明的工具 /
   `no_completed` 中途断开 / `failed` / `error`）。
 - `bodies/YYYYMMDD/<request_id>.req.json|.resp.sse`：走 basispoints 的异常轮次和最近 200 个正常轮次的原文（不含令牌）。
-- 保留 7 天、总量 ≤ 1 GB。查某个客户：按时间和模型在 jsonl 里 grep，再按 request_id 打开原文。
+- `incidents/YYYYMMDD/<时间>-<会话>/`：用户发"继续 / ？？？ / continue"这类催促时，这个会话前 5 轮 + 本轮的原文和摘要（0.6.1 起）。
+- 只留 1 天、总量 ≤ 1 GB。查某个客户：先看 incidents，再按时间和模型在 jsonl 里 grep、按 request_id 打开原文。
 
 ## 构建
 

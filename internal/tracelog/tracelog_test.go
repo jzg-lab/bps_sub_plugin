@@ -212,3 +212,100 @@ func TestNilWriterIsNoop(t *testing.T) {
 		t.Fatal("nil writer dir")
 	}
 }
+
+func TestIsNudge(t *testing.T) {
+	yes := []string{"继续", "继续。", " 继续！", "？？？？", "???", "……", "Continue", "go on", "继续吧", "怎么不动了？", "继续做完"}
+	no := []string{"", "继续把登录页的样式改成蓝色，然后加一个记住密码的选项", "帮我看看这个报错", "continue the refactor of the payment module and add tests"}
+	for _, text := range yes {
+		if !IsNudge(text) {
+			t.Errorf("IsNudge(%q) = false", text)
+		}
+	}
+	for _, text := range no {
+		if IsNudge(text) {
+			t.Errorf("IsNudge(%q) = true", text)
+		}
+	}
+}
+
+func TestLastUserText(t *testing.T) {
+	body := mustJSON(`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"改代码"}]},
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"好"}]},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"继续"}]}]}`)
+	if got := LastUserText(body); got != "继续" {
+		t.Fatalf("got %q", got)
+	}
+	// 最后一条 user 之后有工具结果：这是模型自己的后续轮次，不是用户刚说的。
+	followUp := mustJSON(`{"input":[{"type":"message","role":"user","content":"继续"},{"type":"custom_tool_call","call_id":"c"},{"type":"custom_tool_call_output","call_id":"c","output":"x"}]}`)
+	if got := LastUserText(followUp); got != "" {
+		t.Fatalf("tool follow-up must not count as user text, got %q", got)
+	}
+	if got := LastUserText(mustJSON(`{"input":"继续"}`)); got != "继续" {
+		t.Fatalf("string input: %q", got)
+	}
+}
+
+// 用户发"继续"时，把这个会话前几轮加本轮一起存到 incidents 目录。
+func TestNudgeWritesIncidentWithContext(t *testing.T) {
+	w := newTestWriter(t, true)
+	for i := 1; i <= historyTurns+2; i++ {
+		id := "t" + string(rune('0'+i))
+		w.Log(Record{Entry: Entry{RequestID: id, Session: "sess-abcdef123", Route: "bps", Outcome: OutcomeText}, Request: []byte(`{"turn":"` + id + `"}`), Response: []byte("data: " + id)})
+	}
+	w.Log(Record{Entry: Entry{RequestID: "other", Session: "sess-other", Route: "bps", Outcome: OutcomeText}, Request: []byte("{}"), Response: []byte("x")})
+	w.Log(Record{Entry: Entry{RequestID: "codexturn", Session: "sess-abcdef123", Route: "codex", Outcome: OutcomeText}})
+	w.Log(Record{Entry: Entry{RequestID: "nudge", Session: "sess-abcdef123", Route: "bps", Outcome: OutcomeCommentaryOnly, Nudge: true}, Request: []byte(`{"turn":"nudge"}`), Response: []byte("data: n"), Abnormal: true})
+	w.Close()
+
+	var nudge Entry
+	for _, entry := range readLines(t, w) {
+		if entry.RequestID == "nudge" {
+			nudge = entry
+		}
+	}
+	if !nudge.Nudge || nudge.Incident == "" || !strings.HasPrefix(nudge.Incident, "incidents/") {
+		t.Fatalf("nudge entry=%+v", nudge)
+	}
+	dir := filepath.Join(w.Dir(), nudge.Incident)
+	summary, err := os.ReadFile(filepath.Join(dir, "summary.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(summary)), "\n")
+	if len(lines) != historyTurns+1 || !strings.Contains(lines[len(lines)-1], `"request_id":"nudge"`) || !strings.Contains(lines[len(lines)-2], "codexturn") {
+		t.Fatalf("summary must hold the last %d turns plus the nudge, in order:\n%s", historyTurns, summary)
+	}
+	if strings.Contains(string(summary), `"other"`) || strings.Contains(string(summary), `"t1"`) {
+		t.Fatalf("summary must only contain this session's latest turns:\n%s", summary)
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "*.req.json"))
+	if len(files) != historyTurns { // 5 轮里有一轮是直接走 codex 的（没有原文），加上本轮 = 5 个请求文件
+		t.Fatalf("request files=%v", files)
+	}
+	last, _ := os.ReadFile(filepath.Join(dir, "06-nudge.req.json"))
+	if string(last) != `{"turn":"nudge"}` {
+		t.Fatalf("nudge turn body=%q", last)
+	}
+	if w.Incidents.Load() != 1 {
+		t.Fatalf("incidents=%d", w.Incidents.Load())
+	}
+}
+
+func TestHistoryEvictsIdleAndOldestSessions(t *testing.T) {
+	now := time.Now()
+	w := &Writer{history: map[string]*sessionHistory{}, now: func() time.Time { return now }}
+	for i := 0; i < historySessions+3; i++ {
+		w.remember(Record{Entry: Entry{Session: "s" + strings.Repeat("x", i)}}, now.Add(time.Duration(i)*time.Second))
+	}
+	if len(w.history) != historySessions {
+		t.Fatalf("sessions=%d", len(w.history))
+	}
+	if _, ok := w.history["s"]; ok {
+		t.Fatal("oldest session must be evicted")
+	}
+	now = now.Add(historyIdle + time.Hour)
+	w.expireHistory()
+	if len(w.history) != 0 {
+		t.Fatalf("idle sessions must expire, left %d", len(w.history))
+	}
+}

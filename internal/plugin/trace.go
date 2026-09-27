@@ -67,14 +67,15 @@ func (s *Server) applyTrace(cfg config.Config) {
 
 // traceStatus 是 Health 里的日志状态。
 type traceStatus struct {
-	Enabled  bool             `json:"enabled"`
-	Dir      string           `json:"dir,omitempty"`
-	Error    string           `json:"error,omitempty"`
-	Written  int64            `json:"written"`
-	Abnormal int64            `json:"abnormal"`
-	Dropped  int64            `json:"dropped"`
-	Errors   int64            `json:"errors"`
-	Outcomes map[string]int64 `json:"outcomes"`
+	Enabled   bool             `json:"enabled"`
+	Dir       string           `json:"dir,omitempty"`
+	Error     string           `json:"error,omitempty"`
+	Written   int64            `json:"written"`
+	Abnormal  int64            `json:"abnormal"`
+	Incidents int64            `json:"incidents"`
+	Dropped   int64            `json:"dropped"`
+	Errors    int64            `json:"errors"`
+	Outcomes  map[string]int64 `json:"outcomes"`
 }
 
 func (s *Server) traceStatus() traceStatus {
@@ -87,6 +88,7 @@ func (s *Server) traceStatus() traceStatus {
 		status.Dir = writer.Dir()
 		status.Written = writer.Written.Load()
 		status.Abnormal = writer.Abnormals.Load()
+		status.Incidents = writer.Incidents.Load()
 		status.Dropped = writer.Dropped.Load()
 		status.Errors = writer.Errors.Load()
 	}

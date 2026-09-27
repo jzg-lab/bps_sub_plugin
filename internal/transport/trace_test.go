@@ -129,3 +129,26 @@ func TestTraceSkipsBodiesForPlainCodex(t *testing.T) {
 		t.Fatalf("entry=%+v", entry)
 	}
 }
+
+// 用户第二轮只发了"继续"：摘要标 nudge，并把上一轮一起存进 incidents。
+func TestTraceNudgeSavesIncident(t *testing.T) {
+	commentary := map[string]any{"type": "message", "role": "assistant", "phase": "commentary", "content": []any{map[string]any{"type": "output_text", "text": "我先看看。"}}}
+	upstream := sse("response.completed", map[string]any{"type": "response.completed", "response": map[string]any{"output": []any{commentary}}})
+	forwarder, read, dir := tracedForwarder(t, toolUpstreams(t, upstream), nil)
+	first := `{"model":"gpt-5.6-sol","stream":true,"prompt_cache_key":"sess-1234567890","input":[{"type":"message","role":"user","content":"改一下登录页"}]}`
+	second := `{"model":"gpt-5.6-sol","stream":true,"prompt_cache_key":"sess-1234567890","input":[{"type":"message","role":"user","content":"改一下登录页"},{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"我先看看。"}]},{"type":"message","role":"user","content":"继续"}]}`
+	for i, body := range []string{first, second} {
+		if err := forwarder.Forward(toolStreamWithID(body, "r"+string(rune('1'+i)), 9)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries := read()
+	if len(entries) != 2 || entries[0].Nudge || !entries[1].Nudge || entries[1].Incident == "" || entries[0].Session != "sess-1234567890" {
+		t.Fatalf("entries=%+v", entries)
+	}
+	for _, name := range []string{"01-r1.req.json", "01-r1.resp.sse", "02-r2.req.json", "02-r2.resp.sse", "summary.jsonl"} {
+		if _, err := os.Stat(filepath.Join(dir, entries[1].Incident, name)); err != nil {
+			t.Errorf("missing %s: %v", name, err)
+		}
+	}
+}

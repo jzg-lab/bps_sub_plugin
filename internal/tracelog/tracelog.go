@@ -5,6 +5,7 @@ package tracelog
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,8 +16,8 @@ import (
 )
 
 const (
-	// DefaultRetention 是日志保留天数。
-	DefaultRetention = 7 * 24 * time.Hour
+	// DefaultRetention 是日志保留时长：只是排错用，留一天就够。
+	DefaultRetention = 24 * time.Hour
 	// DefaultMaxBytes 是日志目录总量上限，超了从最旧的文件删起。
 	DefaultMaxBytes = 1 << 30
 	// recentNormal 是保留原文的最近正常轮次数（超过的正常轮次原文会被删掉）。
@@ -26,6 +27,11 @@ const (
 
 	queueSize     = 1024
 	cleanupPeriod = 10 * time.Minute
+
+	// 催促事件（用户发"继续"）时一起保存的上下文：每个会话在内存里留最近 historyTurns 轮原文。
+	historyTurns    = 5
+	historySessions = 200
+	historyIdle     = 30 * time.Minute
 )
 
 // Entry 是一个请求的摘要，写成 requests-YYYYMMDD.jsonl 里的一行。
@@ -50,6 +56,8 @@ type Entry struct {
 	Text           string   `json:"text,omitempty"` // 这一轮最后一段助手文字（截断）
 	UpstreamError  string   `json:"upstream_error,omitempty"`
 	Error          string   `json:"error,omitempty"`
+	Nudge          bool     `json:"nudge,omitempty"`     // 本轮用户消息是"继续 / ？？？"之类的催促
+	Incident       string   `json:"incident,omitempty"`  // 催促时保存的上下文目录（相对日志目录）
 	Cancelled      bool     `json:"cancelled,omitempty"` // 宿主提前结束（客户端断开、宿主读到 completed 后关流、插件停用）
 	Truncated      bool     `json:"truncated,omitempty"` // 响应太大，只保存了前一部分
 	Bodies         bool     `json:"bodies,omitempty"`    // 是否保存了原文
@@ -78,10 +86,20 @@ type Writer struct {
 	mu     sync.Mutex
 	normal []string // 最近正常轮次的原文文件（旧的在前）
 
+	// history 按会话留最近几轮（只在写线程里访问，不用加锁）。
+	history map[string]*sessionHistory
+
 	Written   atomic.Int64
 	Dropped   atomic.Int64
 	Errors    atomic.Int64
 	Abnormals atomic.Int64
+	Incidents atomic.Int64
+}
+
+// sessionHistory 是一个会话最近几轮的原文。
+type sessionHistory struct {
+	turns []Record
+	last  time.Time
 }
 
 // Options 是 Writer 的配置。
@@ -111,6 +129,7 @@ func New(options Options) (*Writer, error) {
 		now:       time.Now,
 		queue:     make(chan Record, queueSize),
 		done:      make(chan struct{}),
+		history:   map[string]*sessionHistory{},
 	}
 	w.wg.Add(1)
 	go w.loop()
@@ -130,7 +149,7 @@ func (w *Writer) Log(record Record) {
 	if w == nil {
 		return
 	}
-	if record.Abnormal {
+	if record.Abnormal || record.Nudge {
 		w.Abnormals.Add(1)
 	}
 	select {
@@ -160,6 +179,7 @@ func (w *Writer) loop() {
 			w.write(record)
 		case <-ticker.C:
 			w.cleanup()
+			w.expireHistory()
 		case <-w.done:
 			for {
 				select {
@@ -179,6 +199,15 @@ func (w *Writer) write(record Record) {
 	entry := record.Entry
 	if entry.Time == "" {
 		entry.Time = now.Format(time.RFC3339Nano)
+	}
+
+	if w.bodies && record.Nudge && entry.Session != "" {
+		if dir, ok := w.writeIncident(record, now); ok {
+			entry.Incident = dir
+		}
+	}
+	if w.bodies && entry.Session != "" {
+		w.remember(record, now)
 	}
 
 	if w.bodies && (len(record.Request) > 0 || len(record.Response) > 0) {
@@ -216,6 +245,93 @@ func (w *Writer) write(record Record) {
 		return
 	}
 	w.Written.Add(1)
+}
+
+// remember 把这一轮放进会话历史（只留最近 historyTurns 轮）。
+func (w *Writer) remember(record Record, now time.Time) {
+	history := w.history[record.Session]
+	if history == nil {
+		if len(w.history) >= historySessions {
+			w.evictOldestSession()
+		}
+		history = &sessionHistory{}
+		w.history[record.Session] = history
+	}
+	record.Request = capBody(record.Request)
+	record.Response = capBody(record.Response)
+	history.turns = append(history.turns, record)
+	if len(history.turns) > historyTurns {
+		history.turns = append([]Record(nil), history.turns[len(history.turns)-historyTurns:]...)
+	}
+	history.last = now
+}
+
+func (w *Writer) evictOldestSession() {
+	var oldest string
+	var oldestAt time.Time
+	for session, history := range w.history {
+		if oldest == "" || history.last.Before(oldestAt) {
+			oldest, oldestAt = session, history.last
+		}
+	}
+	delete(w.history, oldest)
+}
+
+func (w *Writer) expireHistory() {
+	cutoff := w.now().Add(-historyIdle)
+	for session, history := range w.history {
+		if history.last.Before(cutoff) {
+			delete(w.history, session)
+		}
+	}
+}
+
+// writeIncident 把会话最近几轮和本轮一起写到 incidents/YYYYMMDD/<时间>-<会话>/，返回相对目录。
+// 文件按顺序编号：01-<request_id>.req.json … 最后一个是本轮（催促的这一轮）。
+func (w *Writer) writeIncident(record Record, now time.Time) (string, bool) {
+	session := safeName(record.Session, now)
+	if len(session) > 8 {
+		session = session[:8]
+	}
+	relative := filepath.Join("incidents", now.Format("20060102"), now.Format("150405")+"-"+session)
+	dir := filepath.Join(w.dir, relative)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		w.Errors.Add(1)
+		return "", false
+	}
+	turns := append([]Record(nil), w.history[record.Session].turnsOrNil()...)
+	turns = append(turns, record)
+	var summary []byte
+	for i, turn := range turns {
+		prefix := filepath.Join(dir, fmt.Sprintf("%02d-%s", i+1, safeName(turn.RequestID, now)))
+		if len(turn.Request) > 0 && !writeCapped(prefix+".req.json", turn.Request) {
+			w.Errors.Add(1)
+		}
+		if len(turn.Response) > 0 && !writeCapped(prefix+".resp.sse", turn.Response) {
+			w.Errors.Add(1)
+		}
+		line, _ := json.Marshal(turn.Entry)
+		summary = append(append(summary, line...), '\n')
+	}
+	if os.WriteFile(filepath.Join(dir, "summary.jsonl"), summary, 0o600) != nil {
+		w.Errors.Add(1)
+	}
+	w.Incidents.Add(1)
+	return relative, true
+}
+
+func (h *sessionHistory) turnsOrNil() []Record {
+	if h == nil {
+		return nil
+	}
+	return h.turns
+}
+
+func capBody(data []byte) []byte {
+	if len(data) > maxBodyBytes {
+		return data[:maxBodyBytes]
+	}
+	return data
 }
 
 // rememberNormal 记住正常轮次的原文，只保留最近 recentNormal 个。
@@ -267,11 +383,17 @@ func (w *Writer) cleanup() {
 			}
 		}
 	}
-	// 删掉空的日期目录。
-	entries, _ := os.ReadDir(filepath.Join(w.dir, "bodies"))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			_ = os.Remove(filepath.Join(w.dir, "bodies", entry.Name())) // 非空时失败，正好
+	// 删掉空目录（bodies/日期、incidents/日期/事件）；非空的删不掉，正好。
+	var dirs []string
+	_ = filepath.Walk(w.dir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && info.IsDir() && path != w.dir {
+			dirs = append(dirs, path)
+		}
+		return nil
+	})
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if base := filepath.Base(dirs[i]); base != "bodies" && base != "incidents" {
+			_ = os.Remove(dirs[i])
 		}
 	}
 }

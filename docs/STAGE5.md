@@ -280,3 +280,28 @@ list_connectors/run_connector_action、run_officejs、web_search。
   `unknown_tool [request_user_input_basispoints]`（原文已存）、`tool_call [request_user_input]`、`text`，首包 14~16 秒。
   0.6.0 签名包放 `release/0.6.0/`。
 
+
+## 10. 0.6.1：日志只留 1 天 + "继续"时保留前几轮上下文（用户要求）
+
+- 保留期 7 天 → **1 天**（用户：只是简单排错日志）。总量上限仍 1 GiB。
+- **催促事件**：用户在会话里发"继续 / continue / go on / ？？？ / 怎么不动了"这类短消息，基本就代表上一轮中断了。
+  插件在内存里按会话（prompt_cache_key，没有就用 session_id）记最近 5 轮的原文（仅走 basispoints 的轮次），
+  检测到本轮最后一条用户消息是催促时，把**这 5 轮加本轮**的请求/响应原文和摘要一起写到
+  `incidents/YYYYMMDD/<时间>-<会话前 8 位>/`，并在摘要行里标 `nudge: true`、`incident` 目录。
+  - 内存上限：最多 200 个会话、每会话 5 轮、单轮原文 ≤ 8 MiB 截断；会话 30 分钟无请求就丢弃。
+  - 判定只看最后一条 user 文字（去掉空白、标点后 ≤ 20 字符且命中关键词，或全是问号/省略号）。
+- [x] **C1** 保留 1 天；催促检测；会话环形缓存；incident 落盘；单测。
+- [x] **C2** 联调验证（真实 basispoints：先一轮，再发"继续"，看 incident 目录）；打包 0.6.1；提交推送。
+- **2026-09-28 C1 ✅**：`DefaultRetention` 改 24 小时；`tracelog.IsNudge`（只含问号/省略号/感叹号，或去标点后 ≤20 字且命中
+  继续/接着/怎么不动了/continue/go on… 前缀）；`LastUserText`（最后一条 user 之后有工具结果就不算）。Writer 写线程里按会话
+  留最近 5 轮（含走 codex 的轮次，只有摘要），催促时写 `incidents/YYYYMMDD/HHMMSS-<会话前8位>/`：`NN-<request_id>.req.json|.resp.sse`
+  + `summary.jsonl`，摘要行标 `nudge`/`incident`；最多 200 个会话、30 分钟无请求丢弃。状态加 `incidents`，配置页显示"用户催促 N 次"。
+- **2026-09-28 C2 ✅**：本机 Codex CLI → Forwarder（开日志）→ 真实 basispoints（12789；12783 的 basispoints 额度已用完）。
+  第一轮「看一下 calc.py 有没有 bug，先别改」3 个请求（exec、exec、text），再 `codex exec resume --last "继续"`：
+  第 4 个请求标 `nudge:true`，`incidents/20260928/001412-01a0e3a4/` 里是 01~04 四轮原文 + summary.jsonl，顺序正确。
+  0.6.1 签名包放 `release/0.6.1/`。
+- **2026-09-28 生产磁盘清理（用户确认 1~6 全删）**：account-manager deployments 里 4 个 startup-check.db（~138G）、
+  account-manager/data/backups 全部（~375G）、account-manager-trial/data/backups 全部（~93G）、`/root/$backup`（17G）、
+  无主 docker 卷（13G）、docker 构建缓存/闲置卷/未用镜像（~21G）。删前确认无进程占用、无部署在跑。
+  磁盘 780G/90% → 130G/15%；sub2api 首页 200，容器全部正常。
+

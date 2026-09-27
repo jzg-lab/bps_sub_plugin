@@ -174,7 +174,7 @@
     } else if (!trace.enabled) {
       text("st-trace", "已关闭");
     } else {
-      var parts = ["已写 " + trace.written + " 条", "异常 " + trace.abnormal + " 条"];
+      var parts = ["已写 " + trace.written + " 条", "异常 " + trace.abnormal + " 条", "用户催促 " + (trace.incidents || 0) + " 次"];
       if (trace.dropped) parts.push("丢弃 " + trace.dropped);
       if (trace.errors) parts.push("写失败 " + trace.errors);
       text("st-trace", parts.join("，") + "（" + trace.dir + "）");
