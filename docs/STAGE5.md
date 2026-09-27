@@ -305,3 +305,30 @@ list_connectors/run_connector_action、run_officejs、web_search。
   无主 docker 卷（13G）、docker 构建缓存/闲置卷/未用镜像（~21G）。删前确认无进程占用、无部署在跑。
   磁盘 780G/90% → 130G/15%；sub2api 首页 200，容器全部正常。
 
+
+## 11. 0.6.2：从生产日志找到的"说要改就停"（2026-09-28）
+
+### 11.1 日志结论（生产 0.6.1，16:22~16:26，174 个 bps 请求）
+- 配置页"连接失败 103"是**误报**：这些请求 `response.completed` 已完整发给宿主，宿主读完就关流
+  （`context canceled`），被算成 error。按原文重新判定：tool_call 149、text 21、unknown_tool 4。
+- 3 次"继续"的前一轮都是：模型说"马上落补丁"→ 发 `run_officejs`，内层 `{"name":"apply_patch","input":"*** Begin Patch…"}`。
+  这批客户端（Codex Desktop / codex_vscode，走中转模式，约六成 bps 流量）声明的 `apply_patch` 是 **function**，参数
+  `{"input": string}`；插件只从 envelope 的 `arguments` 取参数 → 还原失败 → 调用被扣掉，Codex 只收到 commentary，这一轮结束。
+  另 1 次是内层 JSON 引号没转义，解析失败，结果相同。
+- 原生模式有 2 次调了 basispoints 自带工具（list_skills、read_skills、read_sheets_metadata）。
+
+### 11.2 修复（用户确认：做 1、2；3 先试 A，不行做 B）
+1. **还原兼容**：function 工具 envelope 没有 `arguments` 时，用 envelope 里除 `name` 外的字段当参数（`{"input":…}`）；
+   custom 工具 envelope 只有 `arguments` 时，取字符串或唯一的字符串字段当 input。
+2. **还原失败不吞**：解不出的 run_officejs 调用原样发给 Codex（Codex 回 `unsupported call: run_officejs`，会继续下一轮），
+   回放时原样回放该调用，结果换成重试指引（格式错了，重发一次；照参考项目 `_TRANSPORT_RETRY_GUIDANCE`）。
+3. **屏蔽 basispoints 自带工具**：A = 请求带 `tool_choice: allowed_tools` 只放行客户端工具，先实测 basispoints 认不认；
+   不认则 B = 插件拦截这些调用，就地回给 basispoints"不可用"并在同一请求里续上。
+4. 日志：宿主在收到 completed 之后关流不算 error（按实际结局记）。
+
+### 11.3 执行清单
+- [ ] **F1** 还原兼容 + 单测（用生产日志里的真实 envelope）。
+- [ ] **F2** 还原失败原样下发 + 回放 + 重试指引 + 单测。
+- [ ] **F3** 实测 allowed_tools；按结果做 A 或 B + 单测。
+- [ ] **F4** 日志误报修正。
+- [ ] **F5** 联调：Codex CLI 伪装成 apply_patch=function 的客户端 → 真实 basispoints，确认补丁真的落到文件；打包 0.6.2；提交推送。
