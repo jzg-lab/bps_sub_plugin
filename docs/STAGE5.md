@@ -372,3 +372,22 @@ list_connectors/run_connector_action、run_officejs、web_search。
 - 修复：finishTrace 里把 `cancelled` 判断提到 `frameErr` 之前——取消（无论有没有 error 帧、有没有 completed）都记 `cancelled`，不算异常。
   单测 `TestFinishTraceCancelWithErrorFrameIsCancelled`。0.6.3 签名包放 `release/0.6.3/`。
 
+
+## 13. 排查记录：带图片的工具结果导致 422（2026-09-28，暂不修）
+
+### 现象
+生产 0.6.3 日志里 `invalid_body_422` 15 条（当日累计约 101 条），**全部是 gpt-6-astra 带图片的请求**。
+
+### 根因（真实 basispoints 实测，账号 12805，同一 token 同一轮对比）
+- 图片放在 **user 消息**里：basispoints 接受（200）。
+- 图片放在 **工具结果 `function_call_output`** 里（例如 view_image 的返回、客户往对话里贴截图后被当作工具产物）：basispoints 返回 **422 Invalid request body**。
+- 与图片引用形态无关：`input_image` + `file_id`(+detail) 在 user 消息里都 200；`input_file`+file_id 报 400（png 不是文档类型）；`image_url` 填 file_id 报 400。插件用的正是 `input_image`+`file_id`，形态没问题。
+- 结论：**basispoints 不接受工具结果里内嵌图片**，只接受 user 消息里的图片。
+
+### 影响：无（客户被正常服务）
+这 101 条 422 之后**全部自动回落 codex 且成功（status 200：95 text / 1 tool_call / 5 客户端自行取消）**。用户无感知，只是这类请求先试 basispoints 被拒、再走 codex，多一次无用尝试（几百毫秒 + 少量额度）。
+
+### 决定：暂不修（用户确认"先这样"）
+- 方案 A（采纳）：不改。回落 codex 已经把这类请求服务好了；"带图的工具结果"在编程场景不高频（主要是有人贴截图）。零改动风险。
+- 方案 B（备选，未做）：在 `classifyAttachments` 里区分"图片是否在工具结果内"，是则直接判 `has_attachment` 走 codex，省掉那次 422 尝试、配置页也不再出现这类 422。改动小但要发新版本。
+- 复现脚本要点：把生产原始 body 的内联图逐个上传换 file_id 后发 basispoints → 422；把同样图片改放 user 消息 → 200；把工具结果里的图片换成 `[image]` 文本 → 200。
