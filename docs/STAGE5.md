@@ -203,3 +203,35 @@
   保存带 `["free"]`、状态显示原生工具请求/冷却账号数、原因码中文）。0.5.3 签名包 sha256 `4a6f604e…`，
   放在 `release/0.5.3/`；测试环境升级 → healthy。README/本文；提交推送。由用户上传生产。
 
+
+## 8. 与原生 Codex 的差异对照（2026-09-27，对照两个参考项目 + 实测）
+
+参考项目（本地 `/tmp/refs`，只读）：`Kaixxrua/excel-codex-bridge`（8a277df）、`Nonary/ghcp_proxy`（dfb758b）。
+两者都**只走 run_officejs 中转**（从不把工具发给 basispoints，也不认识 `additional_tools`），
+唯一的原生↔客户端工具映射是 `update_plan`。basispoints 自带工具（实测回显 25 个）：update_plan、
+request_user_input_basispoints、read_ranges/write_range 等 Excel 工具、list_skills/read_skills/create_skill/update_skill、
+list_connectors/run_connector_action、run_officejs、web_search。
+
+### 8.1 已实测的差异（原生工具模式，新版 Codex）
+
+| basispoints 行为 | Codex 结果 | 实测 |
+|---|---|---|
+| 自带 `update_plan`（summary/description） | 0.5.3 已转换 | 正常 |
+| `request_user_input_basispoints`（多一个 summary） | `unsupported call`；改名映射后 Codex exec 模式报 "unavailable in Default mode"（TUI 才可用） | 5 个任务里 2 次调用 |
+| Excel/技能工具（list_skills、read_sheets_metadata…） | `unsupported call`，浪费一轮 | 提到 Excel 时就调 |
+| 服务端 web_search | 服务端搜完直接回答 | 正常 |
+| exec（含 view_image、apply_patch） | 正常 | 正常 |
+| 工具结果里的内联图片 | 422 → 回落 codex；换成 file_id 后 basispoints 接受（200） | |
+
+### 8.2 参考项目有、插件没有（或不同）
+
+| 项 | excel-codex-bridge | ghcp_proxy | 插件 |
+|---|---|---|---|
+| 心跳：静默 15 秒发 `response.in_progress` | 有（仅带工具时） | 无 | 无（设计写了未实现） |
+| reasoning 显示规范化（`**Thinking**` 前缀、summary/content） | 有（仅转换了工具调用时） | 同 | 无 |
+| 工具结果 `unsupported call: run_officejs` → 重试指引 | 有 | 有 | 无（中转模式） |
+| 提示词写明 "list_skills、web-search 等不可用" | 有 | 有 | 中转模式有（少 list_skills）；原生模式 0.5.2 起无 |
+| 中转模式回落重建时 namespace 丢失 | 有此问题 | 有此问题 | 同 |
+| astra 只接受 medium/high/xhigh | 无 | 有（low→medium） | 无；实测 astra low 也 200，无需改 |
+| 工具结果里的图片上传 | 被拒后按类型逐级上传/省略 | 仅 user 消息 | 已扫描整个 input 上传（含工具结果） |
+| 其余（字段白名单、metadata、reasoning 回放、item_reference、passthrough 元数据、update_plan 双向、结果 `{"status":"ok"}`、空输出补文案、反斜杠修复、双层嵌套、断流补 completed、图片上传缓存、身份头） | 有 | 有 | 已有 |
