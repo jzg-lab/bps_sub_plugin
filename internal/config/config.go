@@ -69,6 +69,9 @@ type Config struct {
 	// AccountIDs 是允许改走 basispoints 的 sub2api 账号 ID。空表示不限制；
 	// 非空时其它账号的请求原样发往 codex。宿主灰度只能按比例选账号，这里让管理员手选。
 	AccountIDs []int64 `json:"account_ids"`
+	// ExcludePlanTypes 是不走 basispoints 的 ChatGPT 套餐（取自 access token 的 chatgpt_plan_type）。
+	// 免费号走 basispoints 会被 usage policy 封号，默认排除。
+	ExcludePlanTypes []string `json:"exclude_plan_types"`
 }
 
 // Default 返回默认配置。
@@ -94,7 +97,8 @@ func Default() Config {
 		ImageSupport:  true,
 		MaxImageBytes: 10 << 20,
 
-		AccountIDs: []int64{},
+		AccountIDs:       []int64{},
+		ExcludePlanTypes: []string{"free"},
 	}
 }
 
@@ -148,6 +152,17 @@ func (c *Config) normalize() {
 		ids = append(ids, id)
 	}
 	c.AccountIDs = ids
+	seenPlans := make(map[string]bool, len(c.ExcludePlanTypes))
+	plans := make([]string, 0, len(c.ExcludePlanTypes))
+	for _, plan := range c.ExcludePlanTypes {
+		plan = strings.ToLower(strings.TrimSpace(plan))
+		if plan == "" || seenPlans[plan] {
+			continue
+		}
+		seenPlans[plan] = true
+		plans = append(plans, plan)
+	}
+	c.ExcludePlanTypes = plans
 }
 
 // Validate 检查取值范围。
@@ -201,14 +216,37 @@ func (c Config) Validate() error {
 			return fmt.Errorf("账号 ID 无效: %d", id)
 		}
 	}
+	if len(c.ExcludePlanTypes) > 32 {
+		return errors.New("exclude_plan_types 最多 32 个")
+	}
+	for _, plan := range c.ExcludePlanTypes {
+		if len(plan) > 64 || strings.ContainsAny(plan, " \t\r\n") {
+			return fmt.Errorf("套餐名无效: %q", plan)
+		}
+	}
 	return nil
 }
 
-// Clone 返回深拷贝，避免共享 Models / AccountIDs 切片。
+// Clone 返回深拷贝，避免共享 Models / AccountIDs / ExcludePlanTypes 切片。
 func (c Config) Clone() Config {
 	c.Models = append([]string(nil), c.Models...)
 	c.AccountIDs = append([]int64{}, c.AccountIDs...)
+	c.ExcludePlanTypes = append([]string{}, c.ExcludePlanTypes...)
 	return c
+}
+
+// PlanExcluded 判断套餐是否被排除。套餐未知（空串）时不排除。
+func (c Config) PlanExcluded(plan string) bool {
+	plan = strings.ToLower(strings.TrimSpace(plan))
+	if plan == "" {
+		return false
+	}
+	for _, excluded := range c.ExcludePlanTypes {
+		if excluded == plan {
+			return true
+		}
+	}
+	return false
 }
 
 // AccountSelected 判断账号是否在白名单内。白名单为空时所有账号都算选中。

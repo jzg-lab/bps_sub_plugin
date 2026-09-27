@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jzg-lab/bps_sub_plugin/internal/basispoints"
@@ -23,7 +24,11 @@ const (
 	fallbackConnect     = "connect_error"
 	fallbackRewrite     = "rewrite_error"
 	fallbackImageUpload = "image_upload_failed"
+	fallbackUsagePolicy = "usage_policy"
 )
+
+// reasonPolicyCooldown 是账号在 usage policy 冷却期内、这轮直接走 codex 的原因码。
+const reasonPolicyCooldown = "policy_cooldown"
 
 // errorPeekLimit 是为判断是否回落而读取的错误响应体上限。
 const errorPeekLimit = 64 * 1024
@@ -53,6 +58,11 @@ func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transpo
 	decision := basispoints.Decide(cfg, request.Header, buffered)
 	if !decision.Route {
 		f.Stats.SkipReasons.Add(decision.Reason)
+		return f.sendCodex(ctx, stream, transport, request, buffered, false)
+	}
+	chatgptAccount := strings.TrimSpace(request.Header.Get("Chatgpt-Account-Id"))
+	if f.Stats.PolicyCooldown.Active(chatgptAccount) {
+		f.Stats.SkipReasons.Add(reasonPolicyCooldown)
 		return f.sendCodex(ctx, stream, transport, request, buffered, false)
 	}
 
@@ -101,6 +111,9 @@ func (f *Forwarder) forwardResponses(ctx context.Context, stream Stream, transpo
 		if reason := fallbackReason(response, peeked); reason != "" {
 			_ = response.Body.Close()
 			f.Stats.Fallbacks.Add(reason)
+			if reason == fallbackUsagePolicy {
+				f.Stats.PolicyCooldown.Add(chatgptAccount, policyCooldown)
+			}
 			return f.sendCodex(ctx, stream, transport, request, buffered, false)
 		}
 		// 不回落：把读出的部分接回去，原样回传。
@@ -156,6 +169,10 @@ func fallbackReason(response *http.Response, body []byte) string {
 		}
 		if json.Unmarshal(body, &payload) == nil && payload.Error.Code == "basispoints_model_access_changed" {
 			return fallbackModelAccess
+		}
+		// 账号被 basispoints 封了（免费号常见）：codex 那边通常还能用。
+		if bytes.Contains(bytes.ToLower(body), []byte("blocked by our usage policy")) {
+			return fallbackUsagePolicy
 		}
 		if bytes.Contains(bytes.ToLower(body), []byte("<html")) {
 			return fallbackBlocked

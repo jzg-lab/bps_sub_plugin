@@ -83,6 +83,7 @@ type status struct {
 	ToolRelayed      int64 `json:"tool_relayed"`
 	ToolDecodeFailed int64 `json:"tool_decode_failed"`
 	NativeTools      int64 `json:"native_tools"`
+	PolicyCooldown   int   `json:"policy_cooldown_accounts"`
 	KVErrors         int64 `json:"kv_errors"`
 
 	ImagesUploaded    int64 `json:"images_uploaded"`
@@ -118,6 +119,7 @@ func (s *Server) Health(context.Context, *pluginv1.HealthRequest) (*pluginv1.Hea
 		ToolRelayed:       s.stats.ToolRelayed.Load(),
 		ToolDecodeFailed:  s.stats.ToolDecodeFailed.Load(),
 		NativeTools:       s.stats.NativeTools.Load(),
+		PolicyCooldown:    s.stats.PolicyCooldown.Len(),
 		KVErrors:          s.stats.KVErrors.Load(),
 		ImagesUploaded:    s.stats.ImagesUploaded.Load(),
 		ImagesReused:      s.stats.ImagesReused.Load(),

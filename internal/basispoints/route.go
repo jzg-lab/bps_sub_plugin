@@ -36,6 +36,8 @@ const (
 	ReasonToolNonStream   = "tool_non_stream"
 	// ReasonAccountNotSelected：配置了账号白名单，当前账号不在其中。
 	ReasonAccountNotSelected = "account_not_selected"
+	// ReasonPlanExcluded：账号套餐在 exclude_plan_types 里（默认排除免费号）。
+	ReasonPlanExcluded = "plan_excluded"
 )
 
 // Decision 是路由判定结果。
@@ -118,6 +120,9 @@ func Decide(cfg config.Config, header http.Header, body []byte) Decision {
 	}
 	if strings.TrimSpace(header.Get("Chatgpt-Account-Id")) == "" {
 		return Decision{Reason: ReasonNoAccountID}
+	}
+	if cfg.PlanExcluded(PlanType(header)) {
+		return Decision{Reason: ReasonPlanExcluded}
 	}
 	if nativeTools {
 		// 原生工具：响应里的调用就是客户端声明的工具，不需要 SSE 还原。

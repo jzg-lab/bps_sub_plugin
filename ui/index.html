@@ -32,6 +32,7 @@
         <div><dt>走 codex</dt><dd id="st-routed-codex">—</dd></div>
         <div><dt>工具中转次数</dt><dd id="st-tool-relayed">—</dd></div>
         <div><dt>原生工具请求</dt><dd id="st-native-tools">—</dd></div>
+        <div><dt>被封冷却中的账号</dt><dd id="st-policy-cooldown">—</dd></div>
         <div><dt>图片上传</dt><dd id="st-images-uploaded">—</dd></div>
         <div><dt>宿主服务</dt><dd id="st-host">—</dd></div>
       </dl>
@@ -52,6 +53,10 @@
         <label class="field wide">
           <span><strong>只对这些账号生效</strong>（sub2api 账号 ID，每行一个或用逗号分隔；留空 = 所有进入插件的账号都生效）</span>
           <textarea name="account_ids" rows="4" spellcheck="false" placeholder="例如：12670&#10;12418"></textarea>
+        </label>
+        <label class="field wide">
+          <span><strong>这些套餐不走 basispoints</strong>（ChatGPT 套餐类型，每行一个；免费号走 basispoints 会被封，默认填 free。留空 = 不按套餐排除）</span>
+          <textarea name="exclude_plan_types" rows="2" spellcheck="false" placeholder="free"></textarea>
         </label>
         <fieldset class="field">
           <legend>路由模式</legend>

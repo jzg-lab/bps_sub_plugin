@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jzg-lab/bps_sub_plugin/internal/config"
 	pluginv1 "github.com/jzg-lab/bps_sub_plugin/internal/pluginapi/v1"
@@ -362,11 +363,65 @@ func TestFallbackReason(t *testing.T) {
 		{response(403, ""), `<HTML><body>blocked</body></HTML>`, fallbackBlocked},
 		{response(403, "application/json"), `{"error":{"code":"account_deactivated"}}`, ""},
 		{response(422, "application/json"), `{}`, fallbackInvalidBody},
+		{response(403, "application/json"), `{"error":{"message":"403: This request was blocked by our usage policy.","type":"server_error"}}`, fallbackUsagePolicy},
 		{response(401, "application/json"), `{}`, ""},
 	}
 	for i, tc := range cases {
 		if got := fallbackReason(tc.response, []byte(tc.body)); got != tc.want {
 			t.Errorf("case %d: got %q want %q", i, got, tc.want)
 		}
+	}
+}
+
+const usagePolicyBody = `{"error":{"message":"403: This request was blocked by our usage policy.","type":"server_error","param":null,"code":null}}`
+
+// 账号被 basispoints 封：这轮回落 codex，之后 24 小时内该账号直接走 codex，不再碰 basispoints。
+func TestUsagePolicyFallsBackAndCoolsDown(t *testing.T) {
+	u := newUpstreams(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(usagePolicyBody))
+	})
+	forwarder := u.forwarder(t, nil)
+	now := time.Now()
+	forwarder.Stats.PolicyCooldown.now = func() time.Time { return now }
+
+	start, body, frameErr := run(t, forwarder, responsesStream(routableBody))
+	if frameErr != nil || start.StatusCode != 200 || body != "data: codex\n\n" {
+		t.Fatalf("expected codex fallback: start=%+v body=%q err=%+v", start, body, frameErr)
+	}
+	if forwarder.Stats.Fallbacks.Get(fallbackUsagePolicy) != 1 || forwarder.Stats.PolicyCooldown.Len() != 1 {
+		t.Fatalf("fallbacks=%v cooldown=%d", forwarder.Stats.Fallbacks.Snapshot(), forwarder.Stats.PolicyCooldown.Len())
+	}
+
+	// 冷却期内：不发 basispoints，原始请求体直接去 codex。
+	if _, body, _ := run(t, forwarder, responsesStream(routableBody)); body != "data: codex\n\n" {
+		t.Fatalf("cooldown request body=%q", body)
+	}
+	if u.bpsHits.Load() != 1 || u.codexHits.Load() != 2 || forwarder.Stats.SkipReasons.Get(reasonPolicyCooldown) != 1 {
+		t.Fatalf("bps=%d codex=%d skips=%v", u.bpsHits.Load(), u.codexHits.Load(), forwarder.Stats.SkipReasons.Snapshot())
+	}
+	if u.lastCodexBody.Load().(string) != routableBody {
+		t.Fatal("cooldown must send the original body to codex")
+	}
+
+	// 冷却结束：重新尝试 basispoints。
+	now = now.Add(policyCooldown + time.Second)
+	run(t, forwarder, responsesStream(routableBody))
+	if u.bpsHits.Load() != 2 || forwarder.Stats.PolicyCooldown.Len() != 1 {
+		t.Fatalf("after cooldown bps=%d cooldown=%d", u.bpsHits.Load(), forwarder.Stats.PolicyCooldown.Len())
+	}
+}
+
+func TestUsagePolicyWithoutFallbackIsReturned(t *testing.T) {
+	u := newUpstreams(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(usagePolicyBody))
+	})
+	forwarder := u.forwarder(t, func(c *config.Config) { c.FallbackToCodex = false })
+	start, body, _ := run(t, forwarder, responsesStream(routableBody))
+	if start.StatusCode != http.StatusForbidden || body != usagePolicyBody || u.codexHits.Load() != 0 {
+		t.Fatalf("start=%+v body=%q codex=%d", start, body, u.codexHits.Load())
 	}
 }

@@ -24,6 +24,9 @@
     no_authorization: "缺少令牌",
     no_account_id: "缺少账号 ID",
     account_not_selected: "账号不在生效列表",
+    plan_excluded: "套餐被排除（如免费号）",
+    policy_cooldown: "账号被封，冷却中",
+    usage_policy: "账号被 basispoints 封（usage policy）",
     tool_non_stream: "非流式带工具",
     image_upload_failed: "图片上传失败",
     model_access_changed: "模型无权限",
@@ -64,6 +67,7 @@
     }
     if (Array.isArray(config.models)) form.elements.models.value = config.models.join("\n");
     if (Array.isArray(config.account_ids)) form.elements.account_ids.value = config.account_ids.join("\n");
+    if (Array.isArray(config.exclude_plan_types)) form.elements.exclude_plan_types.value = config.exclude_plan_types.join("\n");
   }
 
   function readAccountIDs() {
@@ -93,6 +97,7 @@
     var mode = form.querySelector('input[name="route_mode"]:checked');
     config.route_mode = mode ? mode.value : "all";
     config.account_ids = readAccountIDs();
+    config.exclude_plan_types = form.elements.exclude_plan_types.value.split(/[\s,，;；]+/).map(function (plan) { return plan.trim().toLowerCase(); }).filter(Boolean);
     config.models = form.elements.models.value.split(/\r?\n/).map(function (line) { return line.trim(); }).filter(Boolean);
     if (config.bps_enabled && config.models.length === 0) throw new Error("启用 basispoints 时模型白名单不能为空");
     return config;
@@ -134,6 +139,7 @@
     text("st-routed-codex", snapshot.routed_codex);
     text("st-tool-relayed", snapshot.tool_relayed);
     text("st-native-tools", snapshot.native_tools);
+    text("st-policy-cooldown", snapshot.policy_cooldown_accounts);
     var uploaded = snapshot.images_uploaded;
     if (uploaded !== undefined) {
       var extra = [];

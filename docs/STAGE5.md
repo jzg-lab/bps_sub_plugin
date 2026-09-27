@@ -177,8 +177,8 @@
 
 ### 7.3 执行清单
 
-- [ ] **U1 套餐跳过**：JWT 解析 + config + Decide + 配置页；单测。
-- [ ] **U2 usage policy 回落 + 冷却**：fallbackReason、冷却表、状态；单测。
+- [x] **U1 套餐跳过**：JWT 解析 + config + Decide + 配置页；单测。
+- [x] **U2 usage policy 回落 + 冷却**：fallbackReason、冷却表、状态；单测。
 - [ ] **U3 update_plan 转换**：响应 SSE 改写 + 历史回放；单测；真实 basispoints 返回喂 Codex CLI 验证计划正常显示；
       真实 basispoints 验证回放后的第二轮 200。
 - [ ] **U4 打包收尾**：0.5.3 签名包放 `release/0.5.3/`、测试环境装一遍；README/本文；提交推送。
@@ -186,3 +186,10 @@
 ### 7.4 执行记录
 
 - **2026-09-27 调研**：见 7.1。
+- **2026-09-27 U1 ✅**：`basispoints.PlanType` 解 JWT payload 读 `chatgpt_plan_type`；config `exclude_plan_types`
+  （默认 `["free"]`，小写去重，≤32 个）；Decide 在身份检查后判定，命中原因码 `plan_excluded`；配置页文本框。
+  单测：JWT 解析（大小写、非 JWT、坏 base64）、free 跳过 / business 放行 / 空列表放行、配置规范化。
+- **2026-09-27 U2 ✅**：403 正文含 `blocked by our usage policy` → 回落原因 `usage_policy`，该 chatgpt 账号
+  进 `Stats.PolicyCooldown`（内存，24 小时）；冷却期内原因码 `policy_cooldown` 直接发原始请求到 codex；
+  状态 `policy_cooldown_accounts` + 配置页。单测：回落、冷却期不打 basispoints、到期恢复、关回落时原样返回 403。
+

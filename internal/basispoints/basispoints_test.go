@@ -1,6 +1,7 @@
 package basispoints
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -376,5 +377,47 @@ func TestTurnStateCountsToolRounds(t *testing.T) {
 		{"type":"function_call","call_id":"b"},{"type":"function_call_output","call_id":"b"},{"type":"function_call_output","call_id":"c"}]`), &input)
 	if _, iteration := turnState(input); iteration != "3" {
 		t.Fatalf("agent_iteration = %s, want 3", iteration)
+	}
+}
+
+// fakeJWT 构造一个只有 payload 有意义的 access token。
+func fakeJWT(t *testing.T, plan string) string {
+	t.Helper()
+	claims, _ := json.Marshal(map[string]any{"https://api.openai.com/auth": map[string]any{"chatgpt_plan_type": plan}})
+	return "eyJhbGciOiJSUzI1NiJ9." + base64.RawURLEncoding.EncodeToString(claims) + ".sig"
+}
+
+func TestPlanType(t *testing.T) {
+	cases := map[string]string{
+		"Bearer " + fakeJWT(t, "free"):                        "free",
+		"bearer " + fakeJWT(t, "Self_Serve_Business_Prolite"): "self_serve_business_prolite",
+		"Bearer not-a-jwt":                                    "",
+		"Bearer a.!!!.c":                                      "",
+		"":                                                    "",
+	}
+	for auth, want := range cases {
+		header := http.Header{}
+		header.Set("Authorization", auth)
+		if got := PlanType(header); got != want {
+			t.Errorf("PlanType(%q) = %q, want %q", auth, got, want)
+		}
+	}
+}
+
+func TestDecideSkipsExcludedPlan(t *testing.T) {
+	header := identityHeader()
+	header.Set("Authorization", "Bearer "+fakeJWT(t, "free"))
+	if decision := Decide(enabledConfig(), header, []byte(`{"model":"gpt-5.6-sol"}`)); decision.Route || decision.Reason != ReasonPlanExcluded {
+		t.Fatalf("free plan: route=%v reason=%q", decision.Route, decision.Reason)
+	}
+	header.Set("Authorization", "Bearer "+fakeJWT(t, "self_serve_business_prolite"))
+	if decision := Decide(enabledConfig(), header, []byte(`{"model":"gpt-5.6-sol"}`)); !decision.Route {
+		t.Fatalf("business plan must route, got %q", decision.Reason)
+	}
+	cfg := enabledConfig()
+	cfg.ExcludePlanTypes = nil
+	header.Set("Authorization", "Bearer "+fakeJWT(t, "free"))
+	if decision := Decide(cfg, header, []byte(`{"model":"gpt-5.6-sol"}`)); !decision.Route {
+		t.Fatalf("empty exclude list must route free plans, got %q", decision.Reason)
 	}
 }

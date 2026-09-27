@@ -111,7 +111,7 @@ func TestJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(want.JSON(), &fields); err != nil {
 		t.Fatal(err)
 	}
-	if len(fields) != 17 {
+	if len(fields) != 18 {
 		t.Fatalf("normalized JSON must contain every field, got %d: %v", len(fields), fields)
 	}
 	if strings.Contains(string(want.JSON()), `<`) {
@@ -164,5 +164,33 @@ func TestTooManyAccountIDs(t *testing.T) {
 	}
 	if _, err := Parse(cfg.JSON()); err == nil {
 		t.Fatal("1001 account ids must be rejected")
+	}
+}
+
+func TestExcludePlanTypes(t *testing.T) {
+	if !Default().PlanExcluded("free") || Default().PlanExcluded("self_serve_business_prolite") || Default().PlanExcluded("") {
+		t.Fatal("default must exclude only free, and never an unknown plan")
+	}
+	cfg, err := Parse([]byte(`{"exclude_plan_types":[" Free ","team","free",""]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ExcludePlanTypes) != 2 || cfg.ExcludePlanTypes[0] != "free" || cfg.ExcludePlanTypes[1] != "team" {
+		t.Fatalf("exclude_plan_types not normalized: %v", cfg.ExcludePlanTypes)
+	}
+	if !cfg.PlanExcluded("TEAM") {
+		t.Fatal("plan match must ignore case")
+	}
+	empty, err := Parse([]byte(`{"exclude_plan_types":[]}`))
+	if err != nil || empty.PlanExcluded("free") || !strings.Contains(string(empty.JSON()), `"exclude_plan_types":[]`) {
+		t.Fatalf("empty list must exclude nothing and serialize as []: %v %s", err, empty.JSON())
+	}
+	if _, err := Parse([]byte(`{"exclude_plan_types":["a b"]}`)); err == nil {
+		t.Fatal("plan with spaces must be rejected")
+	}
+	clone := cfg.Clone()
+	clone.ExcludePlanTypes[0] = "x"
+	if cfg.ExcludePlanTypes[0] != "free" {
+		t.Fatal("Clone must deep-copy ExcludePlanTypes")
 	}
 }
