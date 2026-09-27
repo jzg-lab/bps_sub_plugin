@@ -176,11 +176,13 @@ func (f *Forwarder) finishTrace(recorder *recordingStream, requestID string, acc
 	switch {
 	case terminalSeen:
 		// 结局已定，保留 Analyze 的结果（tool_call / text / …），忽略收尾时的取消。
+	case cancelled:
+		// 宿主/客户端中途断开：relay 会因读不到上游体而发一个 context canceled 的 error 帧，
+		// 但这是客户端主动断的（Forward 已按 cancelled 计数），不是插件出错。放在 frameErr 之前判断。
+		entry.Outcome = tracelog.OutcomeCancelled
 	case recorder.frameErr != "":
 		entry.Outcome = tracelog.OutcomeError
 		entry.Error = recorder.frameErr
-	case cancelled:
-		entry.Outcome = tracelog.OutcomeCancelled
 	case forwardErr != nil:
 		entry.Outcome = tracelog.OutcomeError
 		entry.Error = forwardErr.Error()

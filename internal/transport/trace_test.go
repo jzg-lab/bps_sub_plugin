@@ -188,6 +188,25 @@ func TestFinishTraceCompletedThenCancelIsNotError(t *testing.T) {
 	}
 }
 
+// 客户端中途断开：relay 发出 context canceled 的 error 帧，但因为是取消，不能记成 error（生产 0.6.2 仍有 18 条这样的误报）。
+func TestFinishTraceCancelWithErrorFrameIsCancelled(t *testing.T) {
+	dir := t.TempDir()
+	writer, err := tracelog.New(tracelog.Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &Forwarder{Stats: &Stats{}}
+	f.SetTrace(writer)
+	rec := &recordingStream{status: 200, body: []byte(sse("response.created", map[string]any{"type": "response.created"}) + sse("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "delta": "x"}))}
+	rec.frameErr = "BPS_UPSTREAM_BODY_FAILED: context canceled"
+	rec.info.route = "codex"
+	f.finishTrace(rec, "r1", 1, context.Canceled, true)
+	writer.Close()
+	if entry := readOne(t, dir); entry.Outcome != tracelog.OutcomeCancelled || entry.Error != "" {
+		t.Fatalf("client-cancel with error frame must be cancelled, got %+v", entry)
+	}
+}
+
 func readOne(t *testing.T, dir string) tracelog.Entry {
 	t.Helper()
 	matches, _ := filepath.Glob(filepath.Join(dir, "requests-*.jsonl"))

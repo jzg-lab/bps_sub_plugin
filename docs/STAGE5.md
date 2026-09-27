@@ -351,3 +351,11 @@ list_connectors/run_connector_action、run_officejs、web_search。
   所以实现为：边收边转发，一旦看到未声明工具的 `output_item.added` 就停止转发、改为缓冲；此前已发出的事件（reasoning、commentary）
   保留，续上的请求的事件接着发，最后只发续上请求的 completed。
 
+## 12. 0.6.3：客户端中途断开仍被日志误报成 error（2026-09-28）
+- 0.6.2 只在"已出现 completed"时忽略取消。但客户端在生成中途断开时，relay 因读不到上游体发出
+  `BPS_UPSTREAM_BODY_FAILED: context canceled` 的 error 帧，finishTrace 里 `frameErr` 判断在 `cancelled` 之前，
+  于是仍记成 error。生产 0.6.2 窗口（>=17:00）18 条 error 全是这种：走 codex 透传、first_byte 快、20~48 秒后被断、无 completed。
+  与 basispoints、改写都无关，纯日志归类问题。
+- 修复：finishTrace 里把 `cancelled` 判断提到 `frameErr` 之前——取消（无论有没有 error 帧、有没有 completed）都记 `cancelled`，不算异常。
+  单测 `TestFinishTraceCancelWithErrorFrameIsCancelled`。0.6.3 签名包放 `release/0.6.3/`。
+
