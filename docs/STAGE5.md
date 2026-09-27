@@ -235,3 +235,29 @@ list_connectors/run_connector_action、run_officejs、web_search。
 | astra 只接受 medium/high/xhigh | 无 | 有（low→medium） | 无；实测 astra low 也 200，无需改 |
 | 工具结果里的图片上传 | 被拒后按类型逐级上传/省略 | 仅 user 消息 | 已扫描整个 input 上传（含工具结果） |
 | 其余（字段白名单、metadata、reasoning 回放、item_reference、passthrough 元数据、update_plan 双向、结果 `{"status":"ok"}`、空输出补文案、反斜杠修复、双层嵌套、断流补 completed、图片上传缓存、身份头） | 有 | 有 | 已有 |
+
+## 9. 0.6.0：排查日志（用户确认：要保存对话原文）
+
+### 9.1 为什么要
+宿主启动插件时 `SyncStdout/SyncStderr = io.Discard`（`plugin_runtime.go`），插件任何输出都被丢掉；宿主日志只有
+成功/报错，看不到"这一轮模型最后做了什么"。客户反复反馈"说了要干就不动了"，我们只能猜。
+
+### 9.2 设计
+- 新包 `internal/tracelog`：插件自己写文件。目录默认从插件二进制路径推出
+  （`/app/data/plugins/installed/<id>/<ver>/runtimes/<os>/plugin` → `/app/data/bps-plugin-logs`），可配置。
+- 每个请求一行 JSON（`requests-YYYYMMDD.jsonl`）：时间、request_id、sub2api 账号、chatgpt 账号（截断）、套餐、模型、
+  会话（prompt_cache_key）、路由（bps/codex）与原因、上游状态、首包/总耗时、字节数、**这一轮结局**：
+  - `tool_call`（列出工具名，并标记 Codex 是否声明过该工具）、`text`（最终回答）、`commentary_only`（只说要做、没调工具）、
+    `unknown_tool`（调了 Codex 没声明的工具）、`no_completed`（没收到 completed 就断了）、`error`、`http_<code>`。
+- **原文**：异常结局（commentary_only / unknown_tool / no_completed / error / 非 2xx / 回落）保存发往上游的请求体和
+  返回给宿主的 SSE 到 `bodies/YYYYMMDD/<request_id>.req.json|.resp.sse`；另外保留最近 200 个正常轮次的原文（环形），
+  客户说"看起来正常"的也能追。Authorization 等令牌不写入（只写请求体，不写请求头）。
+- 保留：7 天；总量上限 1 GiB（超了从最旧删）。写盘异步，出错只计数，不影响转发。
+- 配置：`trace_enabled`（默认 true）、`trace_dir`（默认空=自动）、`trace_bodies`（默认 true）。
+- 状态：最近异常数、日志目录、写失败数；配置页显示。
+
+### 9.3 执行清单
+- [ ] **L1** tracelog 包（写行、写原文、轮转清理、容量上限）+ 单测。
+- [ ] **L2** SSE 结局识别（对发给宿主的字节解析）+ 接入 Forwarder（bps / codex / 回落 / 冷却各路径）+ 单测。
+- [ ] **L3** 配置项、状态、配置页。
+- [ ] **L4** 测试环境验证真实写盘（容器内权限、路径）；打包 0.6.0；提交推送。
