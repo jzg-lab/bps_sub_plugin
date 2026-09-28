@@ -13,7 +13,7 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部 **basispoi
 
 ## 状态
 
-**当前版本 0.6.4**（生产现为 0.6.2；默认不改写，按账号白名单开启）。核心能力在配置页打开「启用 basispoints 改写」后生效：满足条件的请求改走 basispoints，其余照旧发往 codex：
+**当前版本 0.6.5**（本轮未部署，生产版本需以后台为准；默认不改写，按账号白名单开启）。核心能力在配置页打开「启用 basispoints 改写」后生效：满足条件的请求改走 basispoints，其余照旧发往 codex：
 
 - 模型在白名单内（默认 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-6-astra`）。
 - 账号套餐不在 `exclude_plan_types`（默认排除 `free`；免费号走 basispoints 会被封）。套餐从 access token 的 JWT 读。
@@ -26,6 +26,7 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部 **basispoi
 basispoints 拒绝请求（模型无权限、请求体不兼容、被 Cloudflare 拦截、连不上、usage policy 封号）时自动回落 codex；被 usage policy 封的账号 24 小时内直接走 codex。配置页能看到路由、回落、工具、每轮结局的计数。默认**不启用 basispoints**，升级插件不会改变现有行为。
 
 **排查日志**（默认开，见下）：每个请求记一行结局，异常轮次和用户催促（"继续/？？？"）时保存对话原文，只留 1 天。
+0.6.5 增加每次上游尝试的被动元数据日志，用于区分 403、RPM/TPM、工作区/会话关联和回落缓存；不改限流、重试或路由策略。详见 [排查字段与分析步骤](docs/LIMIT_DIAGNOSTICS.md)。
 
 已知限制：推理强度最高 `xhigh`（`max` 降为 `xhigh`）；文件/音频、远程 URL 图片走 codex；
 `tool_choice`/`parallel_tool_calls` basispoints 一律拒绝（422），插件不发；「按后缀」路由模式在 sub2api 0.2.8 上不可用。
@@ -66,12 +67,15 @@ basispoints 拒绝请求（模型无权限、请求体不兼容、被 Cloudflare
 排查日志（0.6.0 起，默认开）：sub2api 把插件的 stdout/stderr 丢弃，所以插件自己写文件到
 `<sub2api 数据目录>/bps-plugin-logs/`（生产即 `/opt/sub2api-deploy/data/bps-plugin-logs/`）：
 
-- `requests-YYYYMMDD.jsonl`：每个请求一行，含 request_id、账号、模型、会话、路由与原因、状态码、首包/总耗时、
+- `requests-YYYYMMDD-HH.jsonl`（0.6.5 起按小时，旧版按日）：每个请求一行，含 request_id、账号、模型、会话、路由与原因、状态码、首包/总耗时、
   **这一轮结局**（`tool_call` / `text` / `commentary_only` 只说要做没调工具 / `unknown_tool` 调了 Codex 没声明的工具 /
   `no_completed` 中途断开 / `failed` / `error`）。
+- `upstream-YYYYMMDD-HH.jsonl`：每次 BPS/附件/Codex 上游尝试的 start/finish；身份 hash、实际发送时间、
+  本地 inflight、白名单响应头、原始 HTTP/SSE 错误和实际 usage。以 forward_id + attempt 关联，新增记录不含对话正文/令牌。
 - `bodies/YYYYMMDD/<request_id>.req.json|.resp.sse`：走 basispoints 的异常轮次和最近 200 个正常轮次的原文（不含令牌）。
 - `incidents/YYYYMMDD/<时间>-<会话>/`：用户发"继续 / ？？？ / continue"这类催促时，这个会话前 5 轮 + 本轮的原文和摘要（0.6.1 起）。
-- 只留 1 天、总量 ≤ 5 GB（超了先删原文，摘要 jsonl 最后删）。查某个客户：先看 incidents，再按时间和模型在 jsonl 里 grep、按 request_id 打开原文。
+- 24 小时保留策略、容量目标 5 GiB（每 10 分钟检查，超了先删原文，摘要最后删）。小时分片按最后修改时间整片清理，
+  最早的行最多约多留 70 分钟；停机/关闭日志期间不清理。查某个客户：先看 incidents，再按时间和模型查 jsonl、按 request_id 打开原文。
 
 ## 构建
 

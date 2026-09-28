@@ -17,6 +17,8 @@ const maxCapturedResponse = 16 << 20
 
 // traceInfo 是一次转发过程中收集的排查信息，由各条路径填写，Forward 结束时写日志。
 type traceInfo struct {
+	forwardID   string
+	identity    tracelog.Identity
 	route       string // bps / codex
 	reason      string
 	nativeTools bool
@@ -92,6 +94,12 @@ func (t *traceInfo) noteRequest(header http.Header, body []byte) {
 	}
 	_ = json.Unmarshal(body, &head)
 	t.model = head.Model
+	t.identity.CacheKey = tracelog.Fingerprint("cache_key", head.PromptCacheKey)
+	bodySession, _ := head.ClientMetadata["session_id"].(string)
+	if bodySession == "" {
+		bodySession, _ = head.ClientMetadata["sessionId"].(string)
+	}
+	t.identity.BodySession = tracelog.Fingerprint("session", bodySession)
 	t.session = head.PromptCacheKey
 	if t.session == "" {
 		t.session, _ = head.ClientMetadata["session_id"].(string)
@@ -143,7 +151,14 @@ func (f *Forwarder) finishTrace(recorder *recordingStream, requestID string, acc
 	defer recorder.mu.Unlock()
 	info := recorder.info
 	result := tracelog.Analyze(recorder.body, info.declared)
+	finished := time.Now()
 	entry := tracelog.Entry{
+		Time:           finished.Format(time.RFC3339Nano),
+		ForwardID:      info.forwardID,
+		Instance:       diagnosticInstance,
+		StartedAt:      recorder.started.Format(time.RFC3339Nano),
+		FinishedAt:     finished.Format(time.RFC3339Nano),
+		Identity:       &info.identity,
 		RequestID:      requestID,
 		AccountID:      accountID,
 		ChatGPTAccount: info.chatgpt,
@@ -155,7 +170,7 @@ func (f *Forwarder) finishTrace(recorder *recordingStream, requestID string, acc
 		NativeTools:    info.nativeTools,
 		Status:         recorder.status,
 		FirstByteMs:    recorder.firstByte.Milliseconds(),
-		DurationMs:     time.Since(recorder.started).Milliseconds(),
+		DurationMs:     finished.Sub(recorder.started).Milliseconds(),
 		BytesOut:       recorder.bytesOut,
 		Outcome:        result.Outcome,
 		Tools:          result.Tools,

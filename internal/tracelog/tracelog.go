@@ -34,37 +34,43 @@ const (
 	historyIdle     = 30 * time.Minute
 )
 
-// Entry 是一个请求的摘要，写成 requests-YYYYMMDD.jsonl 里的一行。
+// Entry is a forward summary in an hourly requests-YYYYMMDD-HH.jsonl file.
 type Entry struct {
-	Time           string   `json:"time"`
-	RequestID      string   `json:"request_id"`
-	AccountID      int64    `json:"account_id,omitempty"`
-	ChatGPTAccount string   `json:"chatgpt_account,omitempty"`
-	Plan           string   `json:"plan,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	Session        string   `json:"session,omitempty"`
-	Route          string   `json:"route"`            // bps / codex
-	Reason         string   `json:"reason,omitempty"` // 没走 bps 的原因或回落原因
-	NativeTools    bool     `json:"native_tools,omitempty"`
-	Status         int      `json:"status,omitempty"`
-	FirstByteMs    int64    `json:"first_byte_ms,omitempty"`
-	DurationMs     int64    `json:"duration_ms"`
-	BytesOut       int64    `json:"bytes_out,omitempty"`
-	Outcome        string   `json:"outcome"`
-	Tools          []string `json:"tools,omitempty"`
-	UnknownTools   []string `json:"unknown_tools,omitempty"`
-	Text           string   `json:"text,omitempty"` // 这一轮最后一段助手文字（截断）
-	UpstreamError  string   `json:"upstream_error,omitempty"`
-	Error          string   `json:"error,omitempty"`
-	Nudge          bool     `json:"nudge,omitempty"`     // 本轮用户消息是"继续 / ？？？"之类的催促
-	Incident       string   `json:"incident,omitempty"`  // 催促时保存的上下文目录（相对日志目录）
-	Cancelled      bool     `json:"cancelled,omitempty"` // 宿主提前结束（客户端断开、宿主读到 completed 后关流、插件停用）
-	Truncated      bool     `json:"truncated,omitempty"` // 响应太大，只保存了前一部分
-	Bodies         bool     `json:"bodies,omitempty"`    // 是否保存了原文
+	ForwardID      string    `json:"forward_id,omitempty"`
+	Instance       string    `json:"instance_id,omitempty"`
+	StartedAt      string    `json:"started_at,omitempty"`
+	FinishedAt     string    `json:"finished_at,omitempty"`
+	Identity       *Identity `json:"identity,omitempty"`
+	Time           string    `json:"time"`
+	RequestID      string    `json:"request_id"`
+	AccountID      int64     `json:"account_id,omitempty"`
+	ChatGPTAccount string    `json:"chatgpt_account,omitempty"`
+	Plan           string    `json:"plan,omitempty"`
+	Model          string    `json:"model,omitempty"`
+	Session        string    `json:"session,omitempty"`
+	Route          string    `json:"route"`            // bps / codex
+	Reason         string    `json:"reason,omitempty"` // 没走 bps 的原因或回落原因
+	NativeTools    bool      `json:"native_tools,omitempty"`
+	Status         int       `json:"status,omitempty"`
+	FirstByteMs    int64     `json:"first_byte_ms,omitempty"`
+	DurationMs     int64     `json:"duration_ms"`
+	BytesOut       int64     `json:"bytes_out,omitempty"`
+	Outcome        string    `json:"outcome"`
+	Tools          []string  `json:"tools,omitempty"`
+	UnknownTools   []string  `json:"unknown_tools,omitempty"`
+	Text           string    `json:"text,omitempty"` // 这一轮最后一段助手文字（截断）
+	UpstreamError  string    `json:"upstream_error,omitempty"`
+	Error          string    `json:"error,omitempty"`
+	Nudge          bool      `json:"nudge,omitempty"`     // 本轮用户消息是"继续 / ？？？"之类的催促
+	Incident       string    `json:"incident,omitempty"`  // 催促时保存的上下文目录（相对日志目录）
+	Cancelled      bool      `json:"cancelled,omitempty"` // 宿主提前结束（客户端断开、宿主读到 completed 后关流、插件停用）
+	Truncated      bool      `json:"truncated,omitempty"` // 响应太大，只保存了前一部分
+	Bodies         bool      `json:"bodies,omitempty"`    // 是否保存了原文
 }
 
 // Record 是交给 Writer 的一条记录：摘要加可选原文。
 type Record struct {
+	Diagnostic *UpstreamEvent
 	Entry
 	Request  []byte // 发往上游的请求体（不含请求头，没有令牌）
 	Response []byte // 返回给宿主的响应体
@@ -79,9 +85,11 @@ type Writer struct {
 	maxBytes  int64
 	now       func() time.Time
 
-	queue chan Record
-	done  chan struct{}
-	wg    sync.WaitGroup
+	queue     chan Record
+	done      chan struct{}
+	wg        sync.WaitGroup
+	enqueueMu sync.RWMutex
+	closed    bool
 
 	mu     sync.Mutex
 	normal []string // 最近正常轮次的原文文件（旧的在前）
@@ -89,11 +97,13 @@ type Writer struct {
 	// history 按会话留最近几轮（只在写线程里访问，不用加锁）。
 	history map[string]*sessionHistory
 
-	Written   atomic.Int64
-	Dropped   atomic.Int64
-	Errors    atomic.Int64
-	Abnormals atomic.Int64
-	Incidents atomic.Int64
+	Written           atomic.Int64
+	Dropped           atomic.Int64
+	Errors            atomic.Int64
+	Abnormals         atomic.Int64
+	Incidents         atomic.Int64
+	DiagnosticWritten atomic.Int64
+	DiagnosticDropped atomic.Int64
 }
 
 // sessionHistory 是一个会话最近几轮的原文。
@@ -149,14 +159,36 @@ func (w *Writer) Log(record Record) {
 	if w == nil {
 		return
 	}
+	w.enqueueMu.RLock()
+	defer w.enqueueMu.RUnlock()
+	if w.closed {
+		w.drop(record)
+		return
+	}
 	if record.Abnormal || record.Nudge {
 		w.Abnormals.Add(1)
 	}
 	select {
 	case w.queue <- record:
 	default:
-		w.Dropped.Add(1)
+		w.drop(record)
 	}
+}
+
+func (w *Writer) drop(record Record) {
+	w.Dropped.Add(1)
+	if record.Diagnostic != nil {
+		w.DiagnosticDropped.Add(1)
+	}
+}
+
+// LogDiagnostic takes ownership of event maps and slices; callers must not mutate them.
+func (w *Writer) LogDiagnostic(event UpstreamEvent) {
+	if w == nil {
+		return
+	}
+	event.WriterDropped = w.DiagnosticDropped.Load()
+	w.Log(Record{Diagnostic: &event})
 }
 
 // Close 写完队列里的记录后停止。
@@ -164,7 +196,12 @@ func (w *Writer) Close() {
 	if w == nil {
 		return
 	}
-	close(w.done)
+	w.enqueueMu.Lock()
+	if !w.closed {
+		w.closed = true
+		close(w.done)
+	}
+	w.enqueueMu.Unlock()
 	w.wg.Wait()
 }
 
@@ -195,6 +232,26 @@ func (w *Writer) loop() {
 
 func (w *Writer) write(record Record) {
 	now := w.now()
+	if record.Diagnostic != nil {
+		line, err := json.Marshal(record.Diagnostic)
+		if err != nil {
+			w.Errors.Add(1)
+			return
+		}
+		file, err := os.OpenFile(filepath.Join(w.dir, "upstream-"+now.Format("20060102-15")+".jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			w.Errors.Add(1)
+			return
+		}
+		_, err = file.Write(append(line, 10))
+		closeErr := file.Close()
+		if err != nil || closeErr != nil {
+			w.Errors.Add(1)
+			return
+		}
+		w.DiagnosticWritten.Add(1)
+		return
+	}
 	day := now.Format("20060102")
 	entry := record.Entry
 	if entry.Time == "" {
@@ -233,7 +290,7 @@ func (w *Writer) write(record Record) {
 		w.Errors.Add(1)
 		return
 	}
-	file, err := os.OpenFile(filepath.Join(w.dir, "requests-"+day+".jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	file, err := os.OpenFile(filepath.Join(w.dir, "requests-"+now.Format("20060102-15")+".jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		w.Errors.Add(1)
 		return

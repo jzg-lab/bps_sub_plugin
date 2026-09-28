@@ -426,3 +426,15 @@ list_connectors/run_connector_action、run_officejs、web_search。
   06:13~06:15 其中 12907/12910/12913/12916 在 **codex** 上报 401 token revoked，被宿主停号（与 basispoints 无关的令牌失效，
   但时间上在被 basispoints 拦之后，不排除上游对该工作区做了处置）。prolite 号 12923~12926（同一工作区 `7cb74660`）
   06:34~06:42 各 1 次同样的 403，之后仍 200。"403: Forbidden." 不带 usage policy 字样，当前**不回落**，原样返回给宿主。
+
+## 15. 0.6.5：403/RPM/TPM 被动排查日志（2026-09-29，Asia/Shanghai）
+
+用户确认先留证据，保留一天，后续再实验。不把 generic 403 直接判成限流，也不预设
+1000 RPM 按账号、会话或工作区计数。字段、安全边界、分析顺序和验证记录见
+[LIMIT_DIAGNOSTICS.md](LIMIT_DIAGNOSTICS.md)。
+
+- 新增上游 RoundTrip start/finish 元数据，覆盖附件、BPS、Codex 回落，包含发送时间、
+  本地 inflight、稳定身份 hash、响应头、原始 SSE 错误和 usage；成功请求也记录。
+- 账号/用户/workspace/session/cache key 分开；未知出口不猜；内部 org 不当成 ChatGPT 工作区。
+- 仍为异步队列、24 小时、5 GiB，摘要改小时分片；新增丢弃计数，关闭 Writer 后的日志显式计入丢弃。
+- 现有路由、重试、冷却、限流、原文策略和生产配置不变。本轮仅本地实现、验证和打包；生产部署另行确认。

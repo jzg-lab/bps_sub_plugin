@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -167,6 +168,7 @@ func (f *Forwarder) Forward(stream Stream) error {
 	var recorder *recordingStream
 	if f.trace.Load() != nil {
 		recorder = &recordingStream{Stream: stream, started: time.Now()}
+		recorder.info.forwardID = diagnosticInstance + "-" + strconv.FormatUint(forwardSequence.Add(1), 10)
 		stream = recorder
 	}
 	var requestID string
@@ -223,6 +225,11 @@ func (f *Forwarder) forward(ctx context.Context, stream Stream, requestID *strin
 		transport = pooled
 	}
 	cfg := f.Pool.Config()
+	if info := traceOf(stream); info != nil {
+		info.identity = requestIdentity(request.Header, start.ProxyUrl, cfg.UseAccountProxy)
+		info.plan = basispoints.PlanType(request.Header)
+		transport = &diagnosticTransport{base: transport, writer: f.trace.Load(), info: info, requestID: start.RequestId, accountID: start.AccountId, concurrency: start.AccountConcurrency}
+	}
 
 	if start.HasBody && cfg.BPSEnabled && isResponsesCandidate(request) {
 		if cfg.AccountSelected(start.AccountId) {

@@ -5,7 +5,8 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部的 **basis
 的降载路由。以 sub2api 官方插件机制（`openai.oauth.outbound_transport.v1`）交付，
 **不改 sub2api 源码**。
 
-> 状态：阶段 0-5 已完成，后续按生产反馈迭代到 **0.6.4**（当前版本）。插件已装到生产（签名包，basispoints 默认关，可按账号白名单开启）。
+> 状态：阶段 0-5 已完成，后续按生产反馈迭代到 **0.6.5**（当前版本，本轮未部署）。旧版插件已装到生产（签名包，basispoints 默认关，可按账号白名单开启）。
+> 0.6.5 的 403/RPM/TPM 被动日志、24 小时保留边界及后续分析步骤见 [LIMIT_DIAGNOSTICS.md](LIMIT_DIAGNOSTICS.md)；不改变请求调度或回落策略。
 > 0.5.x/0.6.x 的逐版改动（免费号排除、update_plan 转换、新版 Codex 原生工具、apply_patch 兼容、排查日志、催促上下文等）见 [STAGE5.md](STAGE5.md) 第 6-12 节。各阶段执行记录见 [STAGE2.md](STAGE2.md)、[STAGE3.md](STAGE3.md)、[STAGE4.md](STAGE4.md)、[STAGE5.md](STAGE5.md)。本文随开发进度更新。
 
 ---
