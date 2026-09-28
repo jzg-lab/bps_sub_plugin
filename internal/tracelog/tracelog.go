@@ -18,8 +18,8 @@ import (
 const (
 	// DefaultRetention 是日志保留时长：只是排错用，留一天就够。
 	DefaultRetention = 24 * time.Hour
-	// DefaultMaxBytes 是日志目录总量上限，超了从最旧的文件删起。
-	DefaultMaxBytes = 1 << 30
+	// DefaultMaxBytes 是日志目录总量上限，超了先从最旧的原文删起，摘要（requests-*.jsonl）最后才删。
+	DefaultMaxBytes = 5 << 30
 	// recentNormal 是保留原文的最近正常轮次数（超过的正常轮次原文会被删掉）。
 	recentNormal = 200
 	// maxBodyBytes 是单个原文文件的上限，超出部分截断。
@@ -373,7 +373,14 @@ func (w *Writer) cleanup() {
 		return nil
 	})
 	if total > w.maxBytes {
-		sort.Slice(files, func(i, j int) bool { return files[i].mod.Before(files[j].mod) })
+		// 原文占了绝大部分空间，摘要很小却最旧；先删原文，保住摘要（只看摘要也能排查）。
+		summary := func(f file) bool { return filepath.Dir(f.path) == w.dir && strings.HasSuffix(f.path, ".jsonl") }
+		sort.Slice(files, func(i, j int) bool {
+			if si, sj := summary(files[i]), summary(files[j]); si != sj {
+				return sj
+			}
+			return files[i].mod.Before(files[j].mod)
+		})
 		for _, f := range files {
 			if total <= w.maxBytes*9/10 {
 				break

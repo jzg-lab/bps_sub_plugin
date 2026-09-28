@@ -13,7 +13,7 @@ Sub2API 插件：把 OpenAI OAuth 账号的请求改走 OpenAI 内部 **basispoi
 
 ## 状态
 
-**当前版本 0.6.3，已上线生产**（默认不改写，按账号白名单开启）。核心能力在配置页打开「启用 basispoints 改写」后生效：满足条件的请求改走 basispoints，其余照旧发往 codex：
+**当前版本 0.6.4**（生产现为 0.6.2；默认不改写，按账号白名单开启）。核心能力在配置页打开「启用 basispoints 改写」后生效：满足条件的请求改走 basispoints，其余照旧发往 codex：
 
 - 模型在白名单内（默认 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-6-astra`）。
 - 账号套餐不在 `exclude_plan_types`（默认排除 `free`；免费号走 basispoints 会被封）。套餐从 access token 的 JWT 读。
@@ -71,7 +71,7 @@ basispoints 拒绝请求（模型无权限、请求体不兼容、被 Cloudflare
   `no_completed` 中途断开 / `failed` / `error`）。
 - `bodies/YYYYMMDD/<request_id>.req.json|.resp.sse`：走 basispoints 的异常轮次和最近 200 个正常轮次的原文（不含令牌）。
 - `incidents/YYYYMMDD/<时间>-<会话>/`：用户发"继续 / ？？？ / continue"这类催促时，这个会话前 5 轮 + 本轮的原文和摘要（0.6.1 起）。
-- 只留 1 天、总量 ≤ 1 GB。查某个客户：先看 incidents，再按时间和模型在 jsonl 里 grep、按 request_id 打开原文。
+- 只留 1 天、总量 ≤ 5 GB（超了先删原文，摘要 jsonl 最后删）。查某个客户：先看 incidents，再按时间和模型在 jsonl 里 grep、按 request_id 打开原文。
 
 ## 构建
 

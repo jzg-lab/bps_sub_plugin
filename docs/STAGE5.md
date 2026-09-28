@@ -391,3 +391,38 @@ list_connectors/run_connector_action、run_officejs、web_search。
 - 方案 A（采纳）：不改。回落 codex 已经把这类请求服务好了；"带图的工具结果"在编程场景不高频（主要是有人贴截图）。零改动风险。
 - 方案 B（备选，未做）：在 `classifyAttachments` 里区分"图片是否在工具结果内"，是则直接判 `has_attachment` 走 codex，省掉那次 422 尝试、配置页也不再出现这类 422。改动小但要发新版本。
 - 复现脚本要点：把生产原始 body 的内联图逐个上传换 file_id 后发 basispoints → 422；把同样图片改放 user 消息 → 200；把工具结果里的图片换成 `[image]` 文本 → 200。
+
+
+## 14. 0.6.4：日志上限 1 GiB → 5 GiB，按上限清理时保住摘要（2026-09-28）
+
+### 现象（生产 0.6.2，UTC 06:00）
+- 日志目录 920 MB（bodies 873 MB / incidents 39 MB / 当天 jsonl 8.3 MB），已顶到 1 GiB 上限：最旧文件只到 01:19，
+  **昨天的 `requests-20260927.jsonl` 被按容量删掉了**（清理只看修改时间，摘要文件最旧，最先被删）。
+- 原文增长约 170 MB/小时，1 GiB 只够约 5 小时。
+
+### 改动（用户确认：保留 1 天不变，上限 5 GB）
+- `DefaultMaxBytes` 1 GiB → 5 GiB。
+- 按容量清理时先删原文（bodies / incidents），`requests-*.jsonl` 摘要最后才删。
+
+### 清单
+- [x] **M1** 改上限 + 清理顺序 + 单测；README 同步；版本 0.6.4。
+- [x] **M2** 打包签名 0.6.4 放 `release/0.6.4/`；提交推送（生产升级等用户确认）。
+
+### 执行记录
+- **2026-09-28 M1 ✅**：`DefaultMaxBytes` 5 GiB；`cleanup` 超上限时排序把根目录的 `*.jsonl` 放最后，先删 bodies/incidents
+  里最旧的原文。单测 `TestCleanupCapKeepsSummaryOverBodies`（旧逻辑下摘要最旧会先被删）。README/PLAN 同步，版本 0.6.4。
+- **2026-09-28 M2 ✅**：签名包 `release/0.6.4/`（sha256 7f2336ce…），测试环境升级 0.6.4 启用健康、日志目录正常。
+  签名包已放生产 `/opt/sub2api-deploy/plugin-packages/`，**生产未升级**（等用户确认）。
+
+### 同日排查（未改代码）
+- **`timeout awaiting response headers` 104 条**：全部是**图片接口**（sub2api 日志：`/v1/images/edits` 85、`/v1/images/generations` 14，
+  另 4 条 `/responses`、1 条 chat/completions），走 codex 透传。生产配置 `response_header_timeout_seconds=30`（代码默认 300），
+  图片生成是非流式、出图后才回响应头：成功的图片请求 p50 17.5s、p90 28.7s、最长 65s，502 的全部卡在 30.0~30.7s。
+  即 **30 秒超时把慢一点的出图全砍了**（近 30 小时图片请求 232 个，其中 103 个 502 是这个）。修法：配置页把
+  「响应头超时」调到 180~300 秒，不用发版。
+- **basispoints 403 "403: Forbidden."（team 号）**：12 个 sub2api 账号（12907~12918）是**同一个 ChatGPT team 工作区**
+  （chatgpt-account-id `dbe1f4af`）。01:28~03:09 期间零星 403（每 10 分钟 0~13 条，同时仍有大量 200），
+  03:11 12914 收到一次 usage-policy 403 → 冷却按 chatgpt 账号生效，同工作区 12 个号一起改走 codex。
+  06:13~06:15 其中 12907/12910/12913/12916 在 **codex** 上报 401 token revoked，被宿主停号（与 basispoints 无关的令牌失效，
+  但时间上在被 basispoints 拦之后，不排除上游对该工作区做了处置）。prolite 号 12923~12926（同一工作区 `7cb74660`）
+  06:34~06:42 各 1 次同样的 403，之后仍 200。"403: Forbidden." 不带 usage policy 字样，当前**不回落**，原样返回给宿主。

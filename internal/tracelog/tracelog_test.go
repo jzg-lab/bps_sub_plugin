@@ -2,6 +2,7 @@ package tracelog
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -201,6 +202,34 @@ func TestCleanupRetentionAndCap(t *testing.T) {
 	left, _ := filepath.Glob(filepath.Join(dir, "*"))
 	if len(left) != 1 || filepath.Base(left[0]) != "c" {
 		t.Fatalf("cap must remove oldest first, left=%v", left)
+	}
+}
+
+func TestCleanupCapKeepsSummaryOverBodies(t *testing.T) {
+	dir := t.TempDir()
+	w := &Writer{dir: dir, retention: time.Hour, maxBytes: 100, now: time.Now}
+	summary := filepath.Join(dir, "requests-20260101.jsonl")
+	_ = os.WriteFile(summary, make([]byte, 30), 0o600)
+	oldest := time.Now().Add(-30 * time.Minute)
+	_ = os.Chtimes(summary, oldest, oldest)
+	_ = os.MkdirAll(filepath.Join(dir, "bodies", "20260101"), 0o700)
+	var bodies []string
+	for i := 0; i < 3; i++ {
+		path := filepath.Join(dir, "bodies", "20260101", fmt.Sprintf("r%d.resp.sse", i))
+		_ = os.WriteFile(path, make([]byte, 40), 0o600)
+		stamp := time.Now().Add(time.Duration(i-10) * time.Minute)
+		_ = os.Chtimes(path, stamp, stamp)
+		bodies = append(bodies, path)
+	}
+	w.cleanup()
+	if _, err := os.Stat(summary); err != nil {
+		t.Fatal("summary must survive while bodies can be removed")
+	}
+	if _, err := os.Stat(bodies[0]); !os.IsNotExist(err) {
+		t.Fatal("oldest body must be removed first")
+	}
+	if _, err := os.Stat(bodies[2]); err != nil {
+		t.Fatal("newest body must be kept once under the cap")
 	}
 }
 
